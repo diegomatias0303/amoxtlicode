@@ -770,6 +770,27 @@ impl RenderState {
 
     /// Abre un archivo elegido con el diálogo nativo en una pestaña
     /// NUEVA (no reemplaza la que ya tenías abierta).
+    fn open_file_path(&mut self, path: std::path::PathBuf) {
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let text = String::from_utf8_lossy(&bytes).into_owned();
+                self.text_state.open_file_as_tab(path, &text);
+                self.update_window_title();
+                let text_full = self.text_state.full_text();
+                let uri = self.text_state.active_uri();
+                let lang = self.text_state.active_language();
+                let _ = self.lsp_tx.send(lsp::LspRequest::SyncDoc {
+                    uri,
+                    text: text_full,
+                    language: lang,
+                });
+            }
+            Err(e) => {
+                log::error!("Error al cargar archivo: {e:?}");
+            }
+        }
+    }
+
     fn open_file(&mut self) {
         let path = match rfd::FileDialog::new()
             .add_filter("Todos los archivos compatibles", &[
@@ -1621,12 +1642,26 @@ fn main() -> Result<()> {
     // Ruta del video de fondo: por defecto busca "assets/background.mp4"
     // junto al ejecutable, o se puede pasar como argumento:
     //   cargo run -- ruta\a\tu\video.mp4
-    let video_path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "assets/background.mp4".to_string());
+    let arg1 = std::env::args().nth(1);
+    let mut video_path = "assets/background.mp4".to_string();
+    let mut file_to_open = None;
+
+    if let Some(arg) = arg1 {
+        let arg_lower = arg.to_lowercase();
+        if arg_lower.ends_with(".mp4") || arg_lower.ends_with(".mov") || arg_lower.ends_with(".webm") || arg_lower.ends_with(".avi") {
+            video_path = arg;
+        } else {
+            file_to_open = Some(arg);
+        }
+    }
     info!("Usando video de fondo: {video_path}");
 
     let mut state = pollster::block_on(RenderState::new(window.clone(), &video_path))?;
+    
+    if let Some(file_path) = file_to_open {
+        state.open_file_path(std::path::PathBuf::from(file_path));
+    }
+    
     state.update_window_title();
 
     event_loop.run(move |event, elwt| {
