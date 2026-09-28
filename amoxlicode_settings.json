@@ -1,0 +1,24 @@
+{
+  "background": "None",
+  "theme": "OneDark",
+  "custom_colors": {
+    "line_numbers": "#EF76E1",
+    "string": "#9E00F8"
+  },
+  "font_family": "monospace",
+  "rgb_gamer_mode": true,
+  "editor_opacity": 0.5,
+  "marker_opacity": 0.85,
+  "menu_opacity": 1.0,
+  "topbar_opacity": 0.7,
+  "scrollbar_opacity": 0.3,
+  "rgb_topbar": false,
+  "rgb_syntax": false,
+  "rgb_cursor": true,
+  "rgb_menus": true,
+  "rgb_scrollbar": true,
+  "rgb_markers": true,
+  "rgb_line_numbers": false,
+  "presets": [],
+  "sounds": {}
+}

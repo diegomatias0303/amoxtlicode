@@ -23,6 +23,7 @@ const FONT_SIZE: f32 = 20.0;
 const LINE_HEIGHT: f32 = 26.0;
 /// Margen desde la esquina superior izquierda de la ventana.
 pub const PADDING: f32 = 24.0;
+pub const TERMINAL_HEIGHT: f32 = 250.0;
 /// Ancho de la franja de números de línea, a la izquierda del código.
 pub const GUTTER_WIDTH: f32 = 56.0;
 pub const SCROLLBAR_WIDTH: f32 = 16.0;
@@ -85,6 +86,7 @@ pub enum MenuAction {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    ToggleTerminal,
 
     // Lenguaje
     SetLanguage(Language),
@@ -128,7 +130,7 @@ pub const TOOLBAR_ITEMS: [(&str, Option<TopMenu>, Option<MenuAction>, f32, f32);
     ("Ver", Some(TopMenu::Ver), None, 221.0, 263.0),
     ("Lenguaje", Some(TopMenu::Lenguaje), None, 263.0, 347.0),
     ("Configuración", Some(TopMenu::Configuracion), None, 347.0, 473.0),
-    ("Terminal", None, Some(MenuAction::OpenTerminal), 473.0, 557.0),
+    ("Terminal", None, Some(MenuAction::ToggleTerminal), 473.0, 557.0),
 ];
 
 /// Lo que puede pasar al hacerle clic a una fila del panel de
@@ -353,6 +355,9 @@ pub struct TextState {
 
     pub search_result_marker: Option<(usize, f32)>,
     pub anim_time: f32,
+    pub terminal: crate::terminal::TerminalState,
+    pub terminal_buffer: Buffer,
+    pub terminal_focused: bool,
 }
 
 impl TextState {
@@ -366,6 +371,7 @@ impl TextState {
             TextRenderer::new(&mut atlas, device, MultisampleState::default(), None);
 
         let metrics = Metrics::new(FONT_SIZE, LINE_HEIGHT);
+        let terminal_buffer = Buffer::new(&mut font_system, metrics);
         let mut first_doc = Document::new(
             &mut font_system,
             metrics,
@@ -488,6 +494,9 @@ impl TextState {
             line_numbers_buffer,
             search_result_marker: None,
             anim_time: 0.0,
+            terminal: crate::terminal::TerminalState::new(),
+            terminal_buffer,
+            terminal_focused: false,
         };
         state.rebuild_toolbar_buffer();
         state.rebuild_tab_buffer();
@@ -908,6 +917,41 @@ impl TextState {
 
     pub fn menu_open(&self) -> bool {
         self.active_menu.is_some()
+    }
+
+    pub fn terminal_rect(&self) -> (f32, f32, f32, f32) {
+        let y = self.viewport_height - TERMINAL_HEIGHT;
+        (0.0, y, self.viewport_width, TERMINAL_HEIGHT)
+    }
+
+    pub fn toggle_terminal(&mut self) {
+        self.terminal.is_open = !self.terminal.is_open;
+        self.terminal_focused = self.terminal.is_open;
+        if self.terminal.is_open {
+            self.rebuild_terminal_buffer();
+        }
+        self.dirty = true;
+    }
+
+    pub fn terminal_hit_test(&self, mx: f32, my: f32) -> bool {
+        if !self.terminal.is_open { return false; }
+        let (x, y, w, h) = self.terminal_rect();
+        mx >= x && mx <= x + w && my >= y && my <= y + h
+    }
+    
+    pub fn rebuild_terminal_buffer(&mut self) {
+        if !self.terminal.is_open { return; }
+        let attrs = glyphon::Attrs::new().family(glyphon::Family::Monospace).color(glyphon::Color::rgb(200, 200, 200));
+        let display_text = format!("> {}\n{}", self.terminal.input_line, self.terminal.content);
+        self.terminal_buffer.set_text(&mut self.font_system, &display_text, attrs, glyphon::Shaping::Advanced);
+        
+        let (_, y, w, h) = self.terminal_rect();
+        self.terminal_buffer.set_size(&mut self.font_system, w - PADDING*2.0, h - PADDING);
+        // Scroll to bottom
+        let total_lines = self.terminal_buffer.lines.len() as i32;
+        let visible_lines = ((h - PADDING) / self.eff_line_height()) as i32;
+        // The buffer API in cosmic_text might not have simple scrolling unless we shape it
+        self.terminal_buffer.shape_until_scroll(&mut self.font_system);
     }
 
     pub fn open_menu(&mut self, menu: TopMenu) {
@@ -2758,7 +2802,8 @@ impl TextState {
         self.viewport_width = width as f32;
         self.viewport_height = height as f32;
         let w = width as f32 - PADDING * 2.0 - GUTTER_WIDTH;
-        let h = height as f32 - TOP_OFFSET;
+        let term_h = if self.terminal.is_open { TERMINAL_HEIGHT } else { 0.0 };
+        let h = height as f32 - TOP_OFFSET - term_h;
         let doc = &mut self.documents[self.active];
         doc.buffer.set_size(&mut self.font_system, w, h);
         self.toolbar_buffer

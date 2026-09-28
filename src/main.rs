@@ -12,6 +12,7 @@ mod gradient;
 mod lsp;
 mod settings;
 mod syntax;
+mod terminal;
 mod ui;
 mod video;
 
@@ -587,6 +588,7 @@ impl RenderState {
             editor::MenuAction::ZoomIn => self.text_state.zoom(0.1),
             editor::MenuAction::ZoomOut => self.text_state.zoom(-0.1),
             editor::MenuAction::ZoomReset => self.text_state.zoom_reset(),
+            editor::MenuAction::ToggleTerminal => self.text_state.toggle_terminal(),
 
             // Lenguaje
             editor::MenuAction::SetLanguage(lang) => {
@@ -938,6 +940,10 @@ impl RenderState {
         // Parpadeo del cursor: medio segundo prendido, medio apagado.
         let blink_on = (self.start_time.elapsed().as_millis() / 500) % 2 == 0;
         self.text_state.set_cursor_blink(blink_on);
+        
+        if self.text_state.terminal.poll() {
+            self.text_state.rebuild_terminal_buffer();
+        }
 
         while let Ok(event) = self.lsp_rx.try_recv() {
             match event {
@@ -1101,6 +1107,11 @@ impl RenderState {
             alpha: 0.95,
         });
 
+        if self.text_state.terminal.is_open {
+            let (tx, ty, tw, th) = self.text_state.terminal_rect();
+            ui_rects.push(ui::Rect { x: tx, y: ty, w: tw, h: th, color: [0.05, 0.05, 0.08], alpha: 0.95 * topbar_alpha });
+            ui_rects.push(ui::Rect { x: tx, y: ty, w: tw, h: 2.0, color: accent, alpha: 0.8 });
+        }
         // 2. Barra de pestañas (fondo base)
         let (bx, by, bw, bh) = self.text_state.tab_bar_rect();
         ui_rects.push(ui::Rect { x: bx, y: by, w: bw, h: bh, color: tab_bar_bg, alpha: topbar_alpha });
@@ -1679,6 +1690,11 @@ fn main() -> Result<()> {
                     }
                     if btn_state == ElementState::Pressed && button == MouseButton::Left {
                         let (mx, my) = state.mouse_pos;
+                        if state.text_state.terminal_hit_test(mx, my) {
+                            state.text_state.terminal_focused = true;
+                        } else {
+                            state.text_state.terminal_focused = false;
+                        }
                         if state.text_state.prompt_open() {
                             if let Some(hit) = state.text_state.prompt_hit_test(mx, my) {
                                 match hit {
@@ -1788,6 +1804,33 @@ fn main() -> Result<()> {
                     if event.state != ElementState::Pressed {
                         return;
                     }
+                    if state.text_state.terminal_focused {
+                        match &event.logical_key {
+                            Key::Named(NamedKey::Enter) => {
+                                state.text_state.terminal.send_input();
+                                state.text_state.rebuild_terminal_buffer();
+                            }
+                            Key::Named(NamedKey::Backspace) => {
+                                state.text_state.terminal.input_line.pop();
+                                state.text_state.rebuild_terminal_buffer();
+                            }
+                            Key::Named(NamedKey::Escape) => {
+                                state.text_state.terminal_focused = false;
+                            }
+                            Key::Character(c) if !state.modifiers.control_key() && !state.modifiers.alt_key() => {
+                                state.text_state.terminal.input_line.push_str(c.as_str());
+                                state.text_state.rebuild_terminal_buffer();
+                            }
+                            _ => {}
+                        }
+                        if let Key::Character(c) = &event.logical_key {
+                            if state.modifiers.control_key() && c.as_str() == "" {
+                                state.text_state.toggle_terminal();
+                            }
+                        }
+                        window.request_redraw();
+                        return;
+                    }
 
                     // Si la cajita de texto genérica está abierta, se
                     // lleva TODA la atención del teclado (es modal):
@@ -1856,6 +1899,11 @@ fn main() -> Result<()> {
                     if state.modifiers.control_key() {
                         if let Key::Character(c) = &event.logical_key {
                             match c.as_str().to_lowercase().as_str() {
+                                "" => {
+                                    state.text_state.toggle_terminal();
+                                    window.request_redraw();
+                                    return;
+                                }
                                 "s" => {
                                     state.save_file();
                                     window.request_redraw();
