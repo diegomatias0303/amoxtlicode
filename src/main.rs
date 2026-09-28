@@ -434,6 +434,11 @@ impl RenderState {
                 self.text_state.settings.save();
                 self.text_state.rebuild_panel_buffer();
             }
+            editor::PanelAction::CycleTerminalOpacity => {
+                self.text_state.settings.cycle_terminal_opacity();
+                self.text_state.settings.save();
+                self.text_state.rebuild_panel_buffer();
+            }
             editor::PanelAction::CycleMenuOpacity => {
                 self.text_state.settings.cycle_menu_opacity();
                 self.text_state.settings.save();
@@ -1109,7 +1114,9 @@ impl RenderState {
 
         if self.text_state.terminal.is_open {
             let (tx, ty, tw, th) = self.text_state.terminal_rect();
-            ui_rects.push(ui::Rect { x: tx, y: ty, w: tw, h: th, color: [0.05, 0.05, 0.08], alpha: 0.95 * topbar_alpha });
+            let term_op = self.text_state.settings.terminal_opacity;
+            let bg = self.text_state.settings.color_for(Some("terminal_bg"));
+            ui_rects.push(ui::Rect { x: tx, y: ty, w: tw, h: th, color: [bg[0] as f32 / 255.0, bg[1] as f32 / 255.0, bg[2] as f32 / 255.0], alpha: term_op });
             ui_rects.push(ui::Rect { x: tx, y: ty, w: tw, h: 2.0, color: accent, alpha: 0.8 });
         }
         // 2. Barra de pestañas (fondo base)

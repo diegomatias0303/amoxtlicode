@@ -145,6 +145,7 @@ pub enum PanelAction {
     CycleMarkerOpacity,
     CycleMenuOpacity,
     CycleTopbarOpacity,
+    CycleTerminalOpacity,
     CycleScrollbarOpacity,
     ToggleRgbGamer,
     ToggleRgbElement(crate::settings::RgbElement),
@@ -941,7 +942,7 @@ impl TextState {
     
     pub fn rebuild_terminal_buffer(&mut self) {
         if !self.terminal.is_open { return; }
-        let attrs = glyphon::Attrs::new().family(glyphon::Family::Monospace).color(glyphon::Color::rgb(200, 200, 200));
+        let attrs = glyphon::Attrs::new().family(glyphon::Family::Monospace);
         let display_text = format!("> {}\n{}", self.terminal.input_line, self.terminal.content);
         self.terminal_buffer.set_text(&mut self.font_system, &display_text, attrs, glyphon::Shaping::Advanced);
         
@@ -1599,6 +1600,21 @@ impl TextState {
             let state_str = if self.settings.is_rgb_element_enabled(elem) { "ON" } else { "OFF" };
             rows.push(item(&format!("  🎮 {}: [{state_str}]", elem.label()), PanelAction::ToggleRgbElement(elem)));
         }
+
+        rows.push(header("TERMINAL"));
+        let term_op_pct = (self.settings.terminal_opacity * 100.0).round() as u32;
+        let term_op_str = if term_op_pct >= 99 { "100% (Sólido)".to_string() } else if term_op_pct == 0 { "0% (Invisible)".to_string() } else { format!("{term_op_pct}%") };
+        rows.push(item(&format!("Opacidad terminal: {term_op_str}"), PanelAction::CycleTerminalOpacity));
+        rows.push(PanelRow {
+            label: "   Fondo terminal".to_string(),
+            action: Some(PanelAction::EditColor("terminal_bg")),
+            swatch: Some(self.settings.color_for(Some("terminal_bg"))),
+        });
+        rows.push(PanelRow {
+            label: "   Texto terminal".to_string(),
+            action: Some(PanelAction::EditColor("terminal_text")),
+            swatch: Some(self.settings.color_for(Some("terminal_text"))),
+        });
 
         rows.push(header("BARRA SUPERIOR"));
         let topbar_op_pct = (self.settings.topbar_opacity * 100.0).round() as u32;

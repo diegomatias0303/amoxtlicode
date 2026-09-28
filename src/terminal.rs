@@ -62,6 +62,9 @@ impl TerminalState {
                 if stdin.write_all(cmd.as_bytes()).is_err() {
                     break;
                 }
+                if stdin.flush().is_err() {
+                    break;
+                }
             }
         });
 

@@ -108,10 +108,11 @@ pub enum RgbElement {
     Scrollbar,
     Markers,
     LineNumbers,
+    Terminal,
 }
 
 impl RgbElement {
-    pub const ALL: [RgbElement; 7] = [
+    pub const ALL: [RgbElement; 8] = [
         RgbElement::Syntax,
         RgbElement::Topbar,
         RgbElement::Cursor,
@@ -119,6 +120,7 @@ impl RgbElement {
         RgbElement::Scrollbar,
         RgbElement::Markers,
         RgbElement::LineNumbers,
+        RgbElement::Terminal,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -130,6 +132,7 @@ impl RgbElement {
             RgbElement::Scrollbar => "Scrollbar",
             RgbElement::Markers => "Marcadores línea",
             RgbElement::LineNumbers => "Números de línea",
+            RgbElement::Terminal => "Terminal integrada",
         }
     }
 }
@@ -157,6 +160,8 @@ pub struct Settings {
     pub menu_opacity: f32,
     #[serde(default = "default_topbar_opacity")]
     pub topbar_opacity: f32,
+    #[serde(default = "default_terminal_opacity")]
+    pub terminal_opacity: f32,
     /// Opacidad de la barra de desplazamiento izquierda (0.0 a 1.0).
     #[serde(default = "default_scrollbar_opacity")]
     pub scrollbar_opacity: f32,
@@ -176,6 +181,8 @@ pub struct Settings {
     pub rgb_markers: bool,
     #[serde(default)]
     pub rgb_line_numbers: bool,
+    #[serde(default)]
+    pub rgb_terminal: bool,
 
     /// Presets de colores guardados por el usuario, con nombre.
     #[serde(default)]
@@ -203,6 +210,10 @@ fn default_topbar_opacity() -> f32 {
     0.96
 }
 
+fn default_terminal_opacity() -> f32 {
+    0.90
+}
+
 fn default_scrollbar_opacity() -> f32 {
     0.75
 }
@@ -223,6 +234,7 @@ impl Default for Settings {
             marker_opacity: 0.30,
             menu_opacity: 0.96,
             topbar_opacity: 0.96,
+            terminal_opacity: 0.90,
             scrollbar_opacity: 0.75,
             rgb_topbar: true,
             rgb_syntax: true,
@@ -231,6 +243,7 @@ impl Default for Settings {
             rgb_scrollbar: false,
             rgb_markers: false,
             rgb_line_numbers: false,
+            rgb_terminal: false,
             presets: Vec::new(),
             sounds: HashMap::new(),
         }
@@ -284,6 +297,15 @@ impl Settings {
                 "topbar_text" => return match self.theme {
                     ThemeName::Light => [40, 45, 55],
                     _ => [215, 220, 230],
+                },
+                "terminal_bg" => return match self.theme {
+                    ThemeName::OneDark => [15, 15, 20],
+                    ThemeName::Monokai => [20, 20, 18],
+                    ThemeName::Light => [240, 240, 245],
+                },
+                "terminal_text" => return match self.theme {
+                    ThemeName::Light => [40, 45, 55],
+                    _ => [200, 200, 200],
                 },
                 "line_numbers" => return match self.theme {
                     ThemeName::OneDark => [110, 114, 128],
@@ -364,6 +386,17 @@ impl Settings {
         };
     }
 
+    pub fn cycle_terminal_opacity(&mut self) {
+        self.terminal_opacity = match (self.terminal_opacity * 100.0).round() as u32 {
+            0..=40 => 0.50,
+            41..=60 => 0.70,
+            61..=80 => 0.85,
+            81..=90 => 0.95,
+            91..=99 => 1.00,
+            _ => 0.00,
+        };
+    }
+
     pub fn cycle_topbar_opacity(&mut self) {
         self.topbar_opacity = match (self.topbar_opacity * 100.0).round() as u32 {
             0..=40 => 0.50,
@@ -418,6 +451,7 @@ impl Settings {
             RgbElement::Scrollbar => self.rgb_scrollbar,
             RgbElement::Markers => self.rgb_markers,
             RgbElement::LineNumbers => self.rgb_line_numbers,
+            RgbElement::Terminal => self.rgb_terminal,
         }
     }
 
@@ -430,6 +464,7 @@ impl Settings {
             RgbElement::Scrollbar => self.rgb_scrollbar,
             RgbElement::Markers => self.rgb_markers,
             RgbElement::LineNumbers => self.rgb_line_numbers,
+            RgbElement::Terminal => self.rgb_terminal,
         }
     }
 
@@ -442,6 +477,7 @@ impl Settings {
             RgbElement::Scrollbar => self.rgb_scrollbar = !self.rgb_scrollbar,
             RgbElement::Markers => self.rgb_markers = !self.rgb_markers,
             RgbElement::LineNumbers => self.rgb_line_numbers = !self.rgb_line_numbers,
+            RgbElement::Terminal => self.rgb_terminal = !self.rgb_terminal,
         }
     }
 
