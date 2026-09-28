@@ -1,0 +1,11 @@
+﻿/target/
+**/*.rs.bk
+Cargo.lock
+
+# Omitir videos pesados de prueba
+assets/*.mp4
+assets/*.mov
+
+# Archivos de debug
+*.log
+*.py

@@ -1,0 +1,37 @@
+[package]
+name = "amoxlicode"
+version = "0.1.0"
+edition = "2021"
+description = "AmoxliCode - IDE ultraligero con renderizado GPU (Fase 1: Shell)"
+
+[dependencies]
+winit = "0.29"
+wgpu = "0.19"
+env_logger = "0.11"
+log = "0.4"
+pollster = "0.3"
+anyhow = "1.0"
+ffmpeg-next = "8"
+crossbeam-channel = "0.5"
+glyphon = "0.5"
+tree-sitter = "0.24"
+tree-sitter-c = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-html = "0.23"
+tree-sitter-css = "0.23"
+tree-sitter-sequel = "0.3"
+tree-sitter-highlight = "0.24"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rfd = "0.14"
+image = "0.25"
+bytemuck = { version = "1", features = ["derive"] }
+arboard = "3"
+rodio = "0.19"
+unicode-segmentation = "1.13.3"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
