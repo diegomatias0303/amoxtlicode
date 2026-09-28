@@ -1667,6 +1667,10 @@ fn main() -> Result<()> {
     event_loop.run(move |event, elwt| {
         match event {
             Event::WindowEvent { window_id, event } if window_id == window.id() => match event {
+                WindowEvent::DroppedFile(path) => {
+                    state.open_file_path(path);
+                    window.request_redraw();
+                }
                 WindowEvent::CloseRequested => {
                     if state.text_state.any_dirty() {
                         let result = rfd::MessageDialog::new()
