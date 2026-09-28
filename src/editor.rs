@@ -3045,6 +3045,31 @@ impl TextState {
             self.tooltip_text = None;
         }
 
+        if self.terminal.is_open {
+            let (tx, ty, tw, th) = self.terminal_rect();
+            let is_rgb = self.settings.is_rgb_active(crate::settings::RgbElement::Terminal);
+            let tc = if is_rgb {
+                let [r, g, b] = crate::color::chroma_rgb_f32(self.anim_time, 0.0);
+                glyphon::Color::rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
+            } else {
+                let tc_u8 = self.settings.color_for(Some("terminal_text"));
+                glyphon::Color::rgb(tc_u8[0], tc_u8[1], tc_u8[2])
+            };
+            base_areas.push(TextArea {
+                buffer: &self.terminal_buffer,
+                left: PADDING,
+                top: ty + PADDING / 2.0,
+                scale: 1.0,
+                bounds: TextBounds {
+                    left: 0,
+                    top: ty as i32,
+                    right: width as i32,
+                    bottom: height as i32,
+                },
+                default_color: tc,
+            });
+        }
+        
         self.text_renderer.prepare(
             device,
             queue,
