@@ -5,6 +5,7 @@
 //! pipeline de render (Instance -> Adapter -> Device -> Queue -> Surface)
 //! funciona con un loop de render a 60 FPS (V-Sync / Fifo).
 
+#![windows_subsystem = "windows"]
 mod audio;
 mod color;
 mod editor;
@@ -621,12 +622,31 @@ impl RenderState {
 
             // Terminal
             editor::MenuAction::OpenTerminal => self.open_terminal_here(),
+            editor::MenuAction::RunCode => self.run_code(),
         }
     }
 
     #[allow(dead_code)]
     fn apply_toolbar_action(&mut self, action: editor::ToolbarAction) {
         self.apply_menu_action(action);
+    }
+
+    /// Ejecuta el archivo de la pestaña activa en la terminal integrada según su lenguaje (tipo NetBeans / VS Studio).
+    fn run_code(&mut self) {
+        self.save_file(); // Guarda el archivo antes de ejecutarlo
+
+        let path = match self.text_state.active_file_path() {
+            Some(p) => p,
+            None => return, // No se puede ejecutar un archivo sin guardar
+        };
+
+        let lang = self.text_state.active_language();
+        self.text_state.terminal.is_open = true;
+        self.text_state.terminal.active_tab = crate::terminal::TerminalTab::Output;
+        self.text_state.terminal_focused = true;
+        self.text_state.terminal.start_run(&path, lang);
+        self.text_state.update_viewport_sizes();
+        self.text_state.rebuild_terminal_buffer();
     }
 
     /// Abre una ventana nueva de PowerShell, ya parada en la carpeta del
@@ -768,13 +788,75 @@ impl RenderState {
         }
     }
 
-    /// Abre un archivo elegido con el diálogo nativo en una pestaña
-    /// NUEVA (no reemplaza la que ya tenías abierta).
+    /// Abre un archivo en una pestaña (o pregunta si crearlo si no existe, al estilo Notepad++).
     fn open_file_path(&mut self, path: std::path::PathBuf) {
-        match std::fs::read(&path) {
+        self.open_file_path_opts(path, false);
+    }
+
+    /// Abre un archivo o lo crea (con force_create o preguntando al usuario si no existe).
+    fn open_file_path_opts(&mut self, path: std::path::PathBuf, force_create: bool) {
+        let abs_path = if path.is_relative() {
+            std::env::current_dir().map(|cwd| cwd.join(&path)).unwrap_or(path)
+        } else {
+            path
+        };
+
+        if !abs_path.exists() {
+            let file_name = abs_path
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_else(|| abs_path.display().to_string());
+
+            let should_create = if force_create {
+                true
+            } else {
+                let desc = format!("El archivo \"{}\" no existe.\n\n¿Deseas crearlo?", file_name);
+                let result = rfd::MessageDialog::new()
+                    .set_title("AmoxliCode")
+                    .set_description(&desc)
+                    .set_buttons(rfd::MessageButtons::YesNo)
+                    .show();
+                result == rfd::MessageDialogResult::Yes
+            };
+
+            if should_create {
+                if let Some(parent) = abs_path.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                }
+                match std::fs::write(&abs_path, "") {
+                    Ok(()) => {
+                        info!("Archivo creado exitosamente: {:?}", abs_path);
+                        self.text_state.open_file_as_tab(abs_path, "");
+                        self.update_window_title();
+                        let text_full = self.text_state.full_text();
+                        let uri = self.text_state.active_uri();
+                        let lang = self.text_state.active_language();
+                        let _ = self.lsp_tx.send(lsp::LspRequest::SyncDoc {
+                            uri,
+                            text: text_full,
+                            language: lang,
+                        });
+                    }
+                    Err(e) => {
+                        error!("No se pudo crear el archivo {:?}: {e:?}", abs_path);
+                        let err_desc = format!("No se pudo crear el archivo \"{}\":\n{}", file_name, e);
+                        rfd::MessageDialog::new()
+                            .set_title("Error al crear archivo")
+                            .set_description(&err_desc)
+                            .set_buttons(rfd::MessageButtons::Ok)
+                            .show();
+                    }
+                }
+            }
+            return;
+        }
+
+        match std::fs::read(&abs_path) {
             Ok(bytes) => {
                 let text = String::from_utf8_lossy(&bytes).into_owned();
-                self.text_state.open_file_as_tab(path, &text);
+                self.text_state.open_file_as_tab(abs_path, &text);
                 self.update_window_title();
                 let text_full = self.text_state.full_text();
                 let uri = self.text_state.active_uri();
@@ -785,14 +867,12 @@ impl RenderState {
                     language: lang,
                 });
             }
-            Err(e) => {
-                log::error!("Error al cargar archivo: {e:?}");
-            }
+            Err(e) => error!("No se pudo abrir el archivo {:?}: {e:?}", abs_path),
         }
     }
 
     fn open_file(&mut self) {
-        let path = match rfd::FileDialog::new()
+        let picked = rfd::FileDialog::new()
             .add_filter("Todos los archivos compatibles", &[
                 "txt", "py", "rs", "c", "h", "cpp", "hpp", "java", "js", "ts", "html", "htm", "css", "sql", "json", "md", "cs", "php", "go", "sh", "bash", "xml"
             ])
@@ -801,31 +881,10 @@ impl RenderState {
                 "py", "rs", "c", "h", "cpp", "hpp", "java", "js", "ts", "html", "css", "sql", "json", "md", "cs", "php", "go", "sh", "bash", "xml"
             ])
             .add_filter("Todos los archivos (*.*)", &["*"])
-            .pick_file()
-        {
-            Some(p) => p,
-            None => return,
-        };
+            .pick_file();
 
-        match std::fs::read(&path) {
-            Ok(bytes) => {
-                // Conversión "tolerante": si el archivo no es UTF-8
-                // estricto (común en archivos viejos con acentos en
-                // otra codificación), reemplazamos los bytes inválidos
-                // en vez de fallar por completo.
-                let text = String::from_utf8_lossy(&bytes).into_owned();
-                self.text_state.open_file_as_tab(path, &text);
-                self.update_window_title();
-                let text_full = self.text_state.full_text();
-                let uri = self.text_state.active_uri();
-                let lang = self.text_state.active_language();
-                let _ = self.lsp_tx.send(lsp::LspRequest::SyncDoc {
-                    uri,
-                    language: lang,
-                    text: text_full,
-                });
-            }
-            Err(e) => error!("no se pudo abrir el archivo: {e:?}"),
+        if let Some(path) = picked {
+            self.open_file_path(path);
         }
     }
 
@@ -1137,8 +1196,121 @@ impl RenderState {
             let (tx, ty, tw, th) = self.text_state.terminal_rect();
             let term_op = self.text_state.settings.terminal_opacity;
             let bg = self.text_state.settings.color_for(Some("terminal_bg"));
-            ui_rects.push(ui::Rect { x: tx, y: ty, w: tw, h: th, color: [bg[0] as f32 / 255.0, bg[1] as f32 / 255.0, bg[2] as f32 / 255.0], alpha: term_op });
-            ui_rects.push(ui::Rect { x: tx, y: ty, w: tw, h: 2.0, color: accent, alpha: 0.8 });
+            let bg_f32 = [bg[0] as f32 / 255.0, bg[1] as f32 / 255.0, bg[2] as f32 / 255.0];
+            let topbar_bg = self.text_state.settings.color_for(Some("topbar_bg"));
+            let topbar_bg_f32 = [topbar_bg[0] as f32 / 255.0, topbar_bg[1] as f32 / 255.0, topbar_bg[2] as f32 / 255.0];
+
+            // Fondo general del dock
+            ui_rects.push(ui::Rect { x: tx, y: ty, w: tw, h: th, color: bg_f32, alpha: term_op });
+
+            // Borde superior / manija de redimensionamiento
+            ui_rects.push(ui::Rect { x: tx, y: ty, w: tw, h: 2.0, color: accent, alpha: 0.9 });
+
+            // Fondo de la barra de título / pestañas (Header)
+            ui_rects.push(ui::Rect { x: tx, y: ty, w: tw, h: 28.0, color: topbar_bg_f32, alpha: 0.95 });
+            ui_rects.push(ui::Rect { x: tx, y: ty + 27.0, w: tw, h: 1.0, color: [accent[0] * 0.4, accent[1] * 0.4, accent[2] * 0.4], alpha: 0.7 });
+
+            // Pestaña Salida (resaltada si activa)
+            let out_rect = self.text_state.terminal_tab_output_rect();
+            if self.text_state.terminal.active_tab == crate::terminal::TerminalTab::Output {
+                ui_rects.push(ui::Rect { x: out_rect.0, y: out_rect.1, w: out_rect.2, h: out_rect.3, color: bg_f32, alpha: 0.95 });
+                ui_rects.push(ui::Rect { x: out_rect.0, y: out_rect.1 + out_rect.3 - 2.0, w: out_rect.2, h: 2.0, color: accent, alpha: 1.0 });
+            }
+
+            // Pestaña Terminal (resaltada si activa)
+            let shell_rect = self.text_state.terminal_tab_shell_rect();
+            if self.text_state.terminal.active_tab == crate::terminal::TerminalTab::Shell {
+                ui_rects.push(ui::Rect { x: shell_rect.0, y: shell_rect.1, w: shell_rect.2, h: shell_rect.3, color: bg_f32, alpha: 0.95 });
+                ui_rects.push(ui::Rect { x: shell_rect.0, y: shell_rect.1 + shell_rect.3 - 2.0, w: shell_rect.2, h: 2.0, color: accent, alpha: 1.0 });
+            }
+
+            let in_rect = |(rx, ry, rw, rh): (f32, f32, f32, f32)| {
+                mx >= rx && mx <= rx + rw && my >= ry && my <= ry + rh
+            };
+
+            // Botón [▶ Ejecutar]
+            let run_btn = self.text_state.terminal_btn_run_rect();
+            let run_hover = in_rect(run_btn);
+            let run_color = if run_hover { [0.22, 0.65, 0.35] } else { [0.18, 0.55, 0.28] };
+            ui_rects.push(ui::Rect { x: run_btn.0, y: run_btn.1, w: run_btn.2, h: run_btn.3, color: run_color, alpha: if run_hover { 1.0 } else { 0.85 } });
+
+            // Botón [⏹ Detener]
+            let stop_btn = self.text_state.terminal_btn_stop_rect();
+            let stop_hover = in_rect(stop_btn);
+            let stop_color = if self.text_state.terminal.is_running {
+                if stop_hover { [0.85, 0.28, 0.28] } else { [0.75, 0.22, 0.22] }
+            } else {
+                if stop_hover { [0.42, 0.42, 0.46] } else { [0.35, 0.35, 0.38] }
+            };
+            let stop_alpha = if self.text_state.terminal.is_running {
+                if stop_hover { 1.0 } else { 0.9 }
+            } else {
+                0.5
+            };
+            ui_rects.push(ui::Rect { x: stop_btn.0, y: stop_btn.1, w: stop_btn.2, h: stop_btn.3, color: stop_color, alpha: stop_alpha });
+
+            // Botón [🗑 Limpiar]
+            let clear_btn = self.text_state.terminal_btn_clear_rect();
+            let clear_hover = in_rect(clear_btn);
+            let clear_color = if clear_hover { [0.36, 0.38, 0.48] } else { [0.28, 0.30, 0.38] };
+            ui_rects.push(ui::Rect { x: clear_btn.0, y: clear_btn.1, w: clear_btn.2, h: clear_btn.3, color: clear_color, alpha: if clear_hover { 0.9 } else { 0.7 } });
+
+            // Botón [-] (Zoom out)
+            let z_out_btn = self.text_state.terminal_btn_zoom_out_rect();
+            let z_out_hover = in_rect(z_out_btn);
+            let z_out_color = if z_out_hover { [0.30, 0.33, 0.42] } else { [0.22, 0.24, 0.30] };
+            ui_rects.push(ui::Rect { x: z_out_btn.0, y: z_out_btn.1, w: z_out_btn.2, h: z_out_btn.3, color: z_out_color, alpha: if z_out_hover { 0.95 } else { 0.7 } });
+
+            // Etiqueta [100%] (Zoom reset)
+            let z_lbl_btn = self.text_state.terminal_btn_zoom_label_rect();
+            let z_lbl_hover = in_rect(z_lbl_btn);
+            let z_lbl_color = if z_lbl_hover { [0.26, 0.28, 0.38] } else { [0.18, 0.20, 0.26] };
+            ui_rects.push(ui::Rect { x: z_lbl_btn.0, y: z_lbl_btn.1, w: z_lbl_btn.2, h: z_lbl_btn.3, color: z_lbl_color, alpha: if z_lbl_hover { 0.95 } else { 0.7 } });
+
+            // Botón [+] (Zoom in)
+            let z_in_btn = self.text_state.terminal_btn_zoom_in_rect();
+            let z_in_hover = in_rect(z_in_btn);
+            let z_in_color = if z_in_hover { [0.30, 0.33, 0.42] } else { [0.22, 0.24, 0.30] };
+            ui_rects.push(ui::Rect { x: z_in_btn.0, y: z_in_btn.1, w: z_in_btn.2, h: z_in_btn.3, color: z_in_color, alpha: if z_in_hover { 0.95 } else { 0.7 } });
+
+            // Botón [✕]
+            let close_btn = self.text_state.terminal_btn_close_rect();
+            let close_hover = in_rect(close_btn);
+            let close_color = if close_hover { [0.70, 0.25, 0.25] } else { [0.55, 0.22, 0.22] };
+            ui_rects.push(ui::Rect { x: close_btn.0, y: close_btn.1, w: close_btn.2, h: close_btn.3, color: close_color, alpha: if close_hover { 0.95 } else { 0.7 } });
+
+            // Scrollbar track y thumb
+            let lines = self.text_state.terminal.active_lines();
+            let (_cx, _cy, _cw, ch) = self.text_state.terminal_content_rect();
+            let line_height = self.text_state.terminal.eff_line_height();
+            let visible_lines = (ch / line_height).floor() as usize;
+            if lines.len() > visible_lines && visible_lines > 0 {
+                let sb_rect = self.text_state.terminal_scrollbar_rect();
+                ui_rects.push(ui::Rect { x: sb_rect.0, y: sb_rect.1, w: sb_rect.2, h: sb_rect.3, color: [0.2, 0.2, 0.25], alpha: 0.3 });
+                let ratio = visible_lines as f32 / lines.len() as f32;
+                let thumb_h = (sb_rect.3 * ratio).max(16.0);
+                let max_scroll = lines.len() - visible_lines;
+                let scroll = self.text_state.terminal.active_scroll().min(max_scroll);
+                let scroll_ratio = scroll as f32 / max_scroll as f32;
+                let thumb_y = sb_rect.1 + (sb_rect.3 - thumb_h) * scroll_ratio;
+                ui_rects.push(ui::Rect { x: sb_rect.0, y: thumb_y, w: sb_rect.2, h: thumb_h, color: accent, alpha: 0.65 });
+            }
+
+            // Fondo de la barra de entrada inferior (Input bar)
+            let (_ix, iy, iw, ih) = self.text_state.terminal_input_rect();
+            ui_rects.push(ui::Rect { x: 0.0, y: iy, w: iw, h: ih, color: [bg_f32[0] * 0.8, bg_f32[1] * 0.8, bg_f32[2] * 0.8], alpha: 0.95 });
+            ui_rects.push(ui::Rect { x: 0.0, y: iy, w: iw, h: 1.0, color: [0.3, 0.35, 0.45], alpha: 0.5 });
+
+            // Cursor parpadeante si está enfocado
+            if self.text_state.terminal_focused && (self.text_state.anim_time * 2.5).fract() < 0.5 {
+                let prefix_len = match self.text_state.terminal.active_tab {
+                    crate::terminal::TerminalTab::Output => if self.text_state.terminal.is_running { 9 } else { 2 },
+                    crate::terminal::TerminalTab::Shell => 6,
+                };
+                let char_w = 13.0 * 0.6;
+                let cursor_x = crate::editor::PADDING + (prefix_len + self.text_state.terminal.input_line.chars().count()) as f32 * char_w;
+                ui_rects.push(ui::Rect { x: cursor_x, y: iy + 5.0, w: 2.0, h: 18.0, color: accent, alpha: 1.0 });
+            }
         }
         // 2. Barra de pestañas (fondo base)
         let (bx, by, bw, bh) = self.text_state.tab_bar_rect();
@@ -1639,29 +1811,35 @@ fn main() -> Result<()> {
             .context("no se pudo crear la ventana")?,
     );
 
-    // Ruta del video de fondo: por defecto busca "assets/background.mp4"
-    // junto al ejecutable, o se puede pasar como argumento:
-    //   cargo run -- ruta\a\tu\video.mp4
-    let arg1 = std::env::args().nth(1);
+    // Argumentos de línea de comandos (CMD / PowerShell):
+    // Soporta abrir o crear archivos (ej. `amoxlicode archivo.html`), múltiples archivos
+    // y banderas como `-n` / `--new` / `-c` / `--create` para forzar la creación inmediata.
     let mut video_path = "assets/background.mp4".to_string();
-    let mut file_to_open = None;
+    let mut files_to_open = Vec::new();
+    let mut force_create = false;
 
-    if let Some(arg) = arg1 {
+    for arg in std::env::args().skip(1) {
         let arg_lower = arg.to_lowercase();
-        if arg_lower.ends_with(".mp4") || arg_lower.ends_with(".mov") || arg_lower.ends_with(".webm") || arg_lower.ends_with(".avi") {
+        if arg_lower == "-n" || arg_lower == "--new" || arg_lower == "-c" || arg_lower == "--create" {
+            force_create = true;
+        } else if arg_lower.ends_with(".mp4")
+            || arg_lower.ends_with(".mov")
+            || arg_lower.ends_with(".webm")
+            || arg_lower.ends_with(".avi")
+        {
             video_path = arg;
         } else {
-            file_to_open = Some(arg);
+            files_to_open.push(arg);
         }
     }
     info!("Usando video de fondo: {video_path}");
 
     let mut state = pollster::block_on(RenderState::new(window.clone(), &video_path))?;
-    
-    if let Some(file_path) = file_to_open {
-        state.open_file_path(std::path::PathBuf::from(file_path));
+
+    for file_path in files_to_open {
+        state.open_file_path_opts(std::path::PathBuf::from(file_path), force_create);
     }
-    
+
     state.update_window_title();
 
     event_loop.run(move |event, elwt| {
@@ -1700,9 +1878,13 @@ fn main() -> Result<()> {
                 }
                 WindowEvent::CursorMoved { position, .. } => {
                     state.mouse_pos = (position.x as f32, position.y as f32);
+                    let (mx, my) = state.mouse_pos;
                     if state.mouse_left_down {
-                        let (mx, my) = state.mouse_pos;
-                        if state.scrollbar_dragging {
+                        if state.text_state.terminal.is_resizing {
+                            let new_h = state.text_state.viewport_height - my;
+                            state.text_state.set_terminal_height(new_h);
+                            window.request_redraw();
+                        } else if state.scrollbar_dragging {
                             state.text_state.scrollbar_scroll_to_y(my);
                             window.request_redraw();
                         } else if state.text_state.prompt_dragging {
@@ -1719,6 +1901,13 @@ fn main() -> Result<()> {
                             state.text_state.drag_extend_selection(mx, my);
                             window.request_redraw();
                         }
+                    } else if state.text_state.terminal.is_open {
+                        let (_tx, ty, _tw, _th) = state.text_state.terminal_rect();
+                        if (my - ty).abs() <= 4.0 {
+                            window.set_cursor_icon(winit::window::CursorIcon::NsResize);
+                        } else {
+                            window.set_cursor_icon(winit::window::CursorIcon::Default);
+                        }
                     }
                 }
                 WindowEvent::MouseInput {
@@ -1732,12 +1921,61 @@ fn main() -> Result<()> {
                             state.text_dragging = false;
                             state.scrollbar_dragging = false;
                             state.text_state.prompt_dragging = false;
+                            state.text_state.terminal.is_resizing = false;
                         }
                     }
                     if btn_state == ElementState::Pressed && button == MouseButton::Left {
                         let (mx, my) = state.mouse_pos;
-                        if state.text_state.terminal_hit_test(mx, my) {
+                        if let Some(hit) = state.text_state.terminal_hit_test(mx, my) {
                             state.text_state.terminal_focused = true;
+                            match hit {
+                                editor::TerminalHit::ResizeHandle => {
+                                    state.text_state.terminal.is_resizing = true;
+                                }
+                                editor::TerminalHit::TabOutput => {
+                                    state.text_state.terminal.active_tab = crate::terminal::TerminalTab::Output;
+                                    state.text_state.rebuild_terminal_buffer();
+                                }
+                                editor::TerminalHit::TabShell => {
+                                    state.text_state.terminal.active_tab = crate::terminal::TerminalTab::Shell;
+                                    state.text_state.rebuild_terminal_buffer();
+                                }
+                                editor::TerminalHit::BtnRun => {
+                                    state.run_code();
+                                }
+                                editor::TerminalHit::BtnStop => {
+                                    state.text_state.terminal.stop_runner();
+                                    state.text_state.rebuild_terminal_buffer();
+                                }
+                                editor::TerminalHit::BtnClear => {
+                                    state.text_state.terminal.clear_active();
+                                    state.text_state.rebuild_terminal_buffer();
+                                }
+                                editor::TerminalHit::BtnZoomIn => {
+                                    state.text_state.terminal_zoom(0.1);
+                                }
+                                editor::TerminalHit::BtnZoomOut => {
+                                    state.text_state.terminal_zoom(-0.1);
+                                }
+                                editor::TerminalHit::BtnZoomReset => {
+                                    state.text_state.terminal_zoom_reset();
+                                }
+                                editor::TerminalHit::BtnClose => {
+                                    state.text_state.toggle_terminal();
+                                }
+                                editor::TerminalHit::Scrollbar(ratio) => {
+                                    let lines_len = state.text_state.terminal.active_lines().len();
+                                    let (_cx, _cy, _cw, ch) = state.text_state.terminal_content_rect();
+                                    let visible_lines = (ch / state.text_state.terminal.eff_line_height()).floor() as usize;
+                                    let max_scroll = lines_len.saturating_sub(visible_lines);
+                                    let target = (max_scroll as f32 * ratio).round() as usize;
+                                    state.text_state.terminal.set_active_scroll(target);
+                                    state.text_state.rebuild_terminal_buffer();
+                                }
+                                editor::TerminalHit::Input | editor::TerminalHit::Content => {}
+                            }
+                            window.request_redraw();
+                            return;
                         } else {
                             state.text_state.terminal_focused = false;
                         }
@@ -1833,6 +2071,16 @@ fn main() -> Result<()> {
                         MouseScrollDelta::LineDelta(_, y) => y,
                         MouseScrollDelta::PixelDelta(pos) => (pos.y / 20.0) as f32,
                     };
+                    let (mx, my) = state.mouse_pos;
+                    if state.text_state.terminal.is_open && state.text_state.terminal_hit_test(mx, my).is_some() {
+                        if state.modifiers.control_key() {
+                            state.text_state.terminal_zoom(raw_y.signum() * 0.1);
+                        } else {
+                            state.text_state.terminal_scroll(-(raw_y.signum() as i32) * 3);
+                        }
+                        window.request_redraw();
+                        return;
+                    }
                     if state.text_state.panel_open()
                         && state.text_state.panel_contains(state.mouse_pos.0, state.mouse_pos.1)
                     {
@@ -1863,15 +2111,65 @@ fn main() -> Result<()> {
                             Key::Named(NamedKey::Escape) => {
                                 state.text_state.terminal_focused = false;
                             }
-                            Key::Character(c) if !state.modifiers.control_key() && !state.modifiers.alt_key() => {
-                                state.text_state.terminal.input_line.push_str(c.as_str());
+                            Key::Named(NamedKey::ArrowUp) => {
+                                state.text_state.terminal.history_up();
                                 state.text_state.rebuild_terminal_buffer();
                             }
-                            _ => {}
-                        }
-                        if let Key::Character(c) = &event.logical_key {
-                            if state.modifiers.control_key() && c.as_str() == "" {
-                                state.text_state.toggle_terminal();
+                            Key::Named(NamedKey::ArrowDown) => {
+                                state.text_state.terminal.history_down();
+                                state.text_state.rebuild_terminal_buffer();
+                            }
+                            Key::Named(NamedKey::F5) => {
+                                if state.modifiers.shift_key() {
+                                    state.text_state.terminal.stop_runner();
+                                } else {
+                                    state.run_code();
+                                }
+                                state.text_state.rebuild_terminal_buffer();
+                            }
+                            _ => {
+                                if state.modifiers.control_key() {
+                                    if let Key::Character(c) = &event.logical_key {
+                                        match c.as_str().to_lowercase().as_str() {
+                                            "+" | "=" => {
+                                                state.text_state.terminal_zoom(0.1);
+                                            }
+                                            "-" => {
+                                                state.text_state.terminal_zoom(-0.1);
+                                            }
+                                            "0" => {
+                                                state.text_state.terminal_zoom_reset();
+                                            }
+                                            "v" => {
+                                                if let Ok(mut clip) = arboard::Clipboard::new() {
+                                                    if let Ok(text) = clip.get_text() {
+                                                        state.text_state.terminal.input_line.push_str(text.trim_end_matches(['\r', '\n']));
+                                                        state.text_state.rebuild_terminal_buffer();
+                                                    }
+                                                }
+                                            }
+                                            "c" => {
+                                                if state.text_state.terminal.is_running {
+                                                    state.text_state.terminal.stop_runner();
+                                                    state.text_state.rebuild_terminal_buffer();
+                                                }
+                                            }
+                                            "`" | "~" | "j" | "ñ" => {
+                                                state.text_state.toggle_terminal();
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                } else if !state.modifiers.alt_key() {
+                                    if let Some(text) = &event.text {
+                                        for c in text.chars() {
+                                            if !c.is_control() {
+                                                state.text_state.terminal.input_line.push(c);
+                                            }
+                                        }
+                                        state.text_state.rebuild_terminal_buffer();
+                                    }
+                                }
                             }
                         }
                         window.request_redraw();
@@ -1932,6 +2230,17 @@ fn main() -> Result<()> {
                         }
                     }
 
+                    if event.logical_key == Key::Named(NamedKey::F5) {
+                        if state.modifiers.shift_key() {
+                            state.text_state.terminal.stop_runner();
+                            state.text_state.rebuild_terminal_buffer();
+                        } else {
+                            state.run_code();
+                        }
+                        window.request_redraw();
+                        return;
+                    }
+
                     if event.logical_key == Key::Named(NamedKey::F8) {
                         state.text_state.toggle_rgb_gamer_mode();
                         window.request_redraw();
@@ -1945,7 +2254,7 @@ fn main() -> Result<()> {
                     if state.modifiers.control_key() {
                         if let Key::Character(c) = &event.logical_key {
                             match c.as_str().to_lowercase().as_str() {
-                                "" => {
+                                "`" | "~" | "j" | "ñ" => {
                                     state.text_state.toggle_terminal();
                                     window.request_redraw();
                                     return;

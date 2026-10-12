@@ -23,6 +23,7 @@ const FONT_SIZE: f32 = 20.0;
 const LINE_HEIGHT: f32 = 26.0;
 /// Margen desde la esquina superior izquierda de la ventana.
 pub const PADDING: f32 = 24.0;
+#[allow(dead_code)]
 pub const TERMINAL_HEIGHT: f32 = 250.0;
 /// Ancho de la franja de números de línea, a la izquierda del código.
 pub const GUTTER_WIDTH: f32 = 56.0;
@@ -105,6 +106,7 @@ pub enum MenuAction {
 
     // Terminal
     OpenTerminal,
+    RunCode,
 }
 
 pub type ToolbarAction = MenuAction;
@@ -123,15 +125,34 @@ pub struct MenuRow {
     pub is_checked: bool,
 }
 
-pub const TOOLBAR_ITEMS: [(&str, Option<TopMenu>, Option<MenuAction>, f32, f32); 7] = [
+pub const TOOLBAR_ITEMS: [(&str, Option<TopMenu>, Option<MenuAction>, f32, f32); 8] = [
     ("Archivo", Some(TopMenu::Archivo), None, 12.0, 87.0),
     ("Editar", Some(TopMenu::Editar), None, 87.0, 154.0),
     ("Buscar", Some(TopMenu::Buscar), None, 154.0, 221.0),
     ("Ver", Some(TopMenu::Ver), None, 221.0, 263.0),
     ("Lenguaje", Some(TopMenu::Lenguaje), None, 263.0, 347.0),
     ("Configuración", Some(TopMenu::Configuracion), None, 347.0, 473.0),
-    ("Terminal", None, Some(MenuAction::ToggleTerminal), 473.0, 557.0),
+    ("▶ Ejecutar", None, Some(MenuAction::RunCode), 473.0, 565.0),
+    ("💻 Terminal", None, Some(MenuAction::ToggleTerminal), 565.0, 665.0),
 ];
+
+/// Elementos interactivos del panel dock inferior de ejecución y terminal
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TerminalHit {
+    ResizeHandle,
+    TabOutput,
+    TabShell,
+    BtnRun,
+    BtnStop,
+    BtnClear,
+    BtnZoomOut,
+    BtnZoomReset,
+    BtnZoomIn,
+    BtnClose,
+    Content,
+    Scrollbar(f32),
+    Input,
+}
 
 /// Lo que puede pasar al hacerle clic a una fila del panel de
 /// personalización.
@@ -300,8 +321,8 @@ pub struct TextState {
 
     cursor_blink_on: bool,
 
-    viewport_width: f32,
-    viewport_height: f32,
+    pub viewport_width: f32,
+    pub viewport_height: f32,
     font_scale: f32,
 
     dirty: bool,
@@ -357,7 +378,16 @@ pub struct TextState {
     pub search_result_marker: Option<(usize, f32)>,
     pub anim_time: f32,
     pub terminal: crate::terminal::TerminalState,
+    pub terminal_header_buffer: Buffer,
+    pub terminal_btn_run_buffer: Buffer,
+    pub terminal_btn_stop_buffer: Buffer,
+    pub terminal_btn_clear_buffer: Buffer,
+    pub terminal_btn_zoom_out_buffer: Buffer,
+    pub terminal_btn_zoom_lbl_buffer: Buffer,
+    pub terminal_btn_zoom_in_buffer: Buffer,
+    pub terminal_btn_close_buffer: Buffer,
     pub terminal_buffer: Buffer,
+    pub terminal_input_buffer: Buffer,
     pub terminal_focused: bool,
 }
 
@@ -372,7 +402,17 @@ impl TextState {
             TextRenderer::new(&mut atlas, device, MultisampleState::default(), None);
 
         let metrics = Metrics::new(FONT_SIZE, LINE_HEIGHT);
-        let terminal_buffer = Buffer::new(&mut font_system, metrics);
+        let term_metrics = Metrics::new(13.0, 18.0);
+        let terminal_header_buffer = Buffer::new(&mut font_system, Metrics::new(12.0, 16.0));
+        let terminal_btn_run_buffer = Buffer::new(&mut font_system, Metrics::new(12.0, 16.0));
+        let terminal_btn_stop_buffer = Buffer::new(&mut font_system, Metrics::new(12.0, 16.0));
+        let terminal_btn_clear_buffer = Buffer::new(&mut font_system, Metrics::new(12.0, 16.0));
+        let terminal_btn_zoom_out_buffer = Buffer::new(&mut font_system, Metrics::new(12.0, 16.0));
+        let terminal_btn_zoom_lbl_buffer = Buffer::new(&mut font_system, Metrics::new(12.0, 16.0));
+        let terminal_btn_zoom_in_buffer = Buffer::new(&mut font_system, Metrics::new(12.0, 16.0));
+        let terminal_btn_close_buffer = Buffer::new(&mut font_system, Metrics::new(12.0, 16.0));
+        let terminal_buffer = Buffer::new(&mut font_system, term_metrics);
+        let terminal_input_buffer = Buffer::new(&mut font_system, term_metrics);
         let mut first_doc = Document::new(
             &mut font_system,
             metrics,
@@ -496,12 +536,23 @@ impl TextState {
             search_result_marker: None,
             anim_time: 0.0,
             terminal: crate::terminal::TerminalState::new(),
+            terminal_header_buffer,
+            terminal_btn_run_buffer,
+            terminal_btn_stop_buffer,
+            terminal_btn_clear_buffer,
+            terminal_btn_zoom_out_buffer,
+            terminal_btn_zoom_lbl_buffer,
+            terminal_btn_zoom_in_buffer,
+            terminal_btn_close_buffer,
             terminal_buffer,
+            terminal_input_buffer,
             terminal_focused: false,
         };
+        state.terminal.font_scale = state.settings.terminal_font_scale;
         state.rebuild_toolbar_buffer();
         state.rebuild_tab_buffer();
         state.rebuild_line_numbers();
+        state.rebuild_terminal_buffer();
         state
     }
 
@@ -528,7 +579,10 @@ impl TextState {
 
     pub fn open_file_as_tab(&mut self, path: PathBuf, text: &str) {
         let metrics = Metrics::new(self.eff_font_size(), self.eff_line_height());
-        let name = format!("Sin título {}.txt", self.next_untitled);
+        let name = path
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_else(|| format!("Sin título {}.txt", self.next_untitled));
         let language = path
             .extension()
             .and_then(|e| e.to_str())
@@ -548,8 +602,22 @@ impl TextState {
         };
         doc.file_path = Some(path);
 
-        self.documents.push(doc);
-        self.active = self.documents.len() - 1;
+        // Si solo hay una pestaña y está vacía y sin guardar ("Sin título 1.txt" virgen inicial),
+        // reemplazamos esa pestaña en lugar de dejarla acumulada detrás.
+        let is_first_virgin = self.documents.len() == 1
+            && self.documents[0].file_path.is_none()
+            && !self.documents[0].dirty
+            && (self.documents[0].lines.is_empty()
+                || (self.documents[0].lines.len() == 1 && self.documents[0].lines[0].is_empty()));
+
+        if is_first_virgin {
+            self.documents[0] = doc;
+            self.active = 0;
+        } else {
+            self.documents.push(doc);
+            self.active = self.documents.len() - 1;
+        }
+
         self.hide_completions();
         self.dirty = true;
         self.rebuild_tab_buffer();
@@ -855,6 +923,8 @@ impl TextState {
         let line_height = self.eff_line_height();
         let viewport_width = self.viewport_width;
         let viewport_height = self.viewport_height;
+        let term_h = if self.terminal.is_open { self.terminal.height } else { 0.0 };
+        let h = (viewport_height - TOP_OFFSET - term_h).max(40.0);
         let metrics = Metrics::new(font_size, line_height);
 
         {
@@ -865,7 +935,7 @@ impl TextState {
             doc.buffer.set_size(
                 font_system,
                 viewport_width - PADDING * 2.0 - GUTTER_WIDTH,
-                viewport_height - TOP_OFFSET,
+                h,
             );
         }
 
@@ -874,7 +944,7 @@ impl TextState {
         self.line_numbers_buffer.set_size(
             &mut self.font_system,
             GUTTER_WIDTH - 8.0,
-            viewport_height - TOP_OFFSET,
+            h,
         );
 
         let max_scroll = self.documents[self.active].lines.len().saturating_sub(1);
@@ -921,38 +991,441 @@ impl TextState {
     }
 
     pub fn terminal_rect(&self) -> (f32, f32, f32, f32) {
-        let y = self.viewport_height - TERMINAL_HEIGHT;
-        (0.0, y, self.viewport_width, TERMINAL_HEIGHT)
+        let h = self.terminal.height;
+        let y = self.viewport_height - h;
+        (0.0, y, self.viewport_width, h)
+    }
+
+    pub fn terminal_header_rect(&self) -> (f32, f32, f32, f32) {
+        let (_tx, ty, tw, _th) = self.terminal_rect();
+        (0.0, ty, tw, 28.0)
+    }
+
+    pub fn terminal_content_rect(&self) -> (f32, f32, f32, f32) {
+        let (_tx, ty, tw, th) = self.terminal_rect();
+        let h = (th - 28.0 - 28.0).max(10.0);
+        (0.0, ty + 28.0, tw, h)
+    }
+
+    pub fn terminal_input_rect(&self) -> (f32, f32, f32, f32) {
+        let (_tx, ty, tw, th) = self.terminal_rect();
+        (0.0, ty + th - 28.0, tw, 28.0)
+    }
+
+    pub fn terminal_tab_output_rect(&self) -> (f32, f32, f32, f32) {
+        let (_tx, ty, _tw, _th) = self.terminal_rect();
+        (8.0, ty + 3.0, 95.0, 22.0)
+    }
+
+    pub fn terminal_tab_shell_rect(&self) -> (f32, f32, f32, f32) {
+        let (_tx, ty, _tw, _th) = self.terminal_rect();
+        (108.0, ty + 3.0, 105.0, 22.0)
+    }
+
+    pub fn terminal_btn_run_rect(&self) -> (f32, f32, f32, f32) {
+        let (_tx, ty, tw, _th) = self.terminal_rect();
+        (tw - 402.0, ty + 3.0, 82.0, 22.0)
+    }
+
+    pub fn terminal_btn_stop_rect(&self) -> (f32, f32, f32, f32) {
+        let (_tx, ty, tw, _th) = self.terminal_rect();
+        (tw - 312.0, ty + 3.0, 74.0, 22.0)
+    }
+
+    pub fn terminal_btn_clear_rect(&self) -> (f32, f32, f32, f32) {
+        let (_tx, ty, tw, _th) = self.terminal_rect();
+        (tw - 230.0, ty + 3.0, 72.0, 22.0)
+    }
+
+    pub fn terminal_btn_zoom_out_rect(&self) -> (f32, f32, f32, f32) {
+        let (_tx, ty, tw, _th) = self.terminal_rect();
+        (tw - 150.0, ty + 3.0, 26.0, 22.0)
+    }
+
+    pub fn terminal_btn_zoom_label_rect(&self) -> (f32, f32, f32, f32) {
+        let (_tx, ty, tw, _th) = self.terminal_rect();
+        (tw - 120.0, ty + 3.0, 48.0, 22.0)
+    }
+
+    pub fn terminal_btn_zoom_in_rect(&self) -> (f32, f32, f32, f32) {
+        let (_tx, ty, tw, _th) = self.terminal_rect();
+        (tw - 68.0, ty + 3.0, 26.0, 22.0)
+    }
+
+    pub fn terminal_btn_close_rect(&self) -> (f32, f32, f32, f32) {
+        let (_tx, ty, tw, _th) = self.terminal_rect();
+        (tw - 36.0, ty + 3.0, 28.0, 22.0)
+    }
+
+    pub fn terminal_scrollbar_rect(&self) -> (f32, f32, f32, f32) {
+        let (_tx, ty, tw, th) = self.terminal_content_rect();
+        (tw - 10.0, ty, 6.0, th)
+    }
+
+    pub fn terminal_hit_test(&self, mx: f32, my: f32) -> Option<TerminalHit> {
+        if !self.terminal.is_open {
+            return None;
+        }
+        let (_tx, ty, tw, th) = self.terminal_rect();
+        if my < ty - 4.0 || my > ty + th || mx < 0.0 || mx > tw {
+            return None;
+        }
+
+        // 1. Manija de redimensionamiento (franja de 6px en el borde superior)
+        if my >= ty - 4.0 && my <= ty + 4.0 {
+            return Some(TerminalHit::ResizeHandle);
+        }
+
+        // 2. Barra de pestañas y botones (Header)
+        if my >= ty && my < ty + 28.0 {
+            let in_rect = |(rx, ry, rw, rh): (f32, f32, f32, f32)| {
+                mx >= rx && mx <= rx + rw && my >= ry && my <= ry + rh
+            };
+            if in_rect(self.terminal_btn_close_rect()) {
+                return Some(TerminalHit::BtnClose);
+            }
+            if in_rect(self.terminal_btn_zoom_in_rect()) {
+                return Some(TerminalHit::BtnZoomIn);
+            }
+            if in_rect(self.terminal_btn_zoom_label_rect()) {
+                return Some(TerminalHit::BtnZoomReset);
+            }
+            if in_rect(self.terminal_btn_zoom_out_rect()) {
+                return Some(TerminalHit::BtnZoomOut);
+            }
+            if in_rect(self.terminal_btn_clear_rect()) {
+                return Some(TerminalHit::BtnClear);
+            }
+            if in_rect(self.terminal_btn_stop_rect()) {
+                return Some(TerminalHit::BtnStop);
+            }
+            if in_rect(self.terminal_btn_run_rect()) {
+                return Some(TerminalHit::BtnRun);
+            }
+            if in_rect(self.terminal_tab_output_rect()) {
+                return Some(TerminalHit::TabOutput);
+            }
+            if in_rect(self.terminal_tab_shell_rect()) {
+                return Some(TerminalHit::TabShell);
+            }
+            return Some(TerminalHit::Content);
+        }
+
+        // 3. Barra de entrada inferior (Input)
+        let (_ix, iy, _iw, ih) = self.terminal_input_rect();
+        if my >= iy && my <= iy + ih {
+            return Some(TerminalHit::Input);
+        }
+
+        // 4. Barra de desplazamiento vertical (Scrollbar)
+        let (sx, sy, sw, sh) = self.terminal_scrollbar_rect();
+        if mx >= sx - 4.0 && mx <= sx + sw + 4.0 && my >= sy && my <= sy + sh {
+            let ratio = ((my - sy) / sh).clamp(0.0, 1.0);
+            return Some(TerminalHit::Scrollbar(ratio));
+        }
+
+        Some(TerminalHit::Content)
+    }
+
+    pub fn update_viewport_sizes(&mut self) {
+        let w = self.viewport_width - PADDING * 2.0 - GUTTER_WIDTH;
+        let term_h = if self.terminal.is_open { self.terminal.height } else { 0.0 };
+        let h = (self.viewport_height - TOP_OFFSET - term_h).max(40.0);
+        let active = self.active;
+        self.documents[active].buffer.set_size(&mut self.font_system, w, h);
+        self.line_numbers_buffer.set_size(&mut self.font_system, GUTTER_WIDTH - 8.0, h);
+        self.ensure_cursor_visible();
+        self.dirty = true;
+    }
+
+    pub fn set_terminal_height(&mut self, height: f32) {
+        let clamped = height.clamp(
+            crate::terminal::TerminalState::MIN_HEIGHT,
+            (self.viewport_height - 100.0).max(120.0),
+        );
+        self.terminal.height = clamped;
+        self.update_viewport_sizes();
+        self.rebuild_terminal_buffer();
     }
 
     pub fn toggle_terminal(&mut self) {
         self.terminal.is_open = !self.terminal.is_open;
         self.terminal_focused = self.terminal.is_open;
+        self.update_viewport_sizes();
         if self.terminal.is_open {
             self.rebuild_terminal_buffer();
         }
         self.dirty = true;
     }
 
-    pub fn terminal_hit_test(&self, mx: f32, my: f32) -> bool {
-        if !self.terminal.is_open { return false; }
-        let (x, y, w, h) = self.terminal_rect();
-        mx >= x && mx <= x + w && my >= y && my <= y + h
+    pub fn terminal_scroll(&mut self, delta: i32) {
+        let (_cx, _cy, _cw, ch) = self.terminal_content_rect();
+        let visible_lines = (ch / self.terminal.eff_line_height()).floor() as usize;
+        self.terminal.scroll(delta, visible_lines);
+        self.rebuild_terminal_buffer();
     }
-    
+
+    /// Modifica el zoom de la terminal integrada y lo guarda en las configuraciones.
+    pub fn terminal_zoom(&mut self, delta: f32) {
+        self.terminal.zoom(delta);
+        self.settings.terminal_font_scale = self.terminal.font_scale;
+        self.settings.save();
+        self.rebuild_terminal_buffer();
+        self.dirty = true;
+    }
+
+    /// Restablece el zoom de la terminal al 100%.
+    pub fn terminal_zoom_reset(&mut self) {
+        self.terminal.zoom_reset();
+        self.settings.terminal_font_scale = self.terminal.font_scale;
+        self.settings.save();
+        self.rebuild_terminal_buffer();
+        self.dirty = true;
+    }
+
     pub fn rebuild_terminal_buffer(&mut self) {
-        if !self.terminal.is_open { return; }
-        let attrs = glyphon::Attrs::new().family(glyphon::Family::Monospace);
-        let display_text = format!("> {}\n{}", self.terminal.input_line, self.terminal.content);
-        self.terminal_buffer.set_text(&mut self.font_system, &display_text, attrs, glyphon::Shaping::Advanced);
-        
-        let (_, y, w, h) = self.terminal_rect();
-        self.terminal_buffer.set_size(&mut self.font_system, w - PADDING*2.0, h - PADDING);
-        // Scroll to bottom
-        let total_lines = self.terminal_buffer.lines.len() as i32;
-        let visible_lines = ((h - PADDING) / self.eff_line_height()) as i32;
-        // The buffer API in cosmic_text might not have simple scrolling unless we shape it
-        self.terminal_buffer.shape_until_scroll(&mut self.font_system);
+        if !self.terminal.is_open {
+            return;
+        }
+
+        let font_size = self.terminal.eff_font_size();
+        let line_height = self.terminal.eff_line_height();
+        let term_metrics = Metrics::new(font_size, line_height);
+
+        // --- 1. Header Buffer (Pestañas) ---
+        let (_hx, _hy, hw, hh) = self.terminal_header_rect();
+        self.terminal_header_buffer
+            .set_metrics(&mut self.font_system, Metrics::new(12.0, 16.0));
+        self.terminal_header_buffer
+            .set_size(&mut self.font_system, hw, hh);
+
+        let base_attrs = Attrs::new().family(Family::Monospace);
+        let normal_tc = self.settings.color_for(Some("topbar_text"));
+        let normal_color = Color::rgb(normal_tc[0], normal_tc[1], normal_tc[2]);
+        let accent = self.settings.topbar_accent_rgb();
+        let accent_color = Color::rgb(
+            (accent[0] * 255.0) as u8,
+            (accent[1] * 255.0) as u8,
+            (accent[2] * 255.0) as u8,
+        );
+        let green_color = Color::rgb(80, 220, 120);
+
+        let out_active = self.terminal.active_tab == crate::terminal::TerminalTab::Output;
+        let shell_active = self.terminal.active_tab == crate::terminal::TerminalTab::Shell;
+
+        let mut header_spans: Vec<(&str, Attrs)> = Vec::new();
+        header_spans.push((" ", base_attrs));
+
+        if self.terminal.is_running {
+            header_spans.push(("▶ Salida ● ", base_attrs.color(green_color)));
+        } else {
+            header_spans.push((
+                "▶ Salida ",
+                base_attrs.color(if out_active { accent_color } else { normal_color }),
+            ));
+        }
+
+        header_spans.push((
+            "   💻 Terminal ",
+            base_attrs.color(if shell_active { accent_color } else { normal_color }),
+        ));
+
+        self.terminal_header_buffer
+            .set_rich_text(&mut self.font_system, header_spans, Shaping::Advanced);
+        self.terminal_header_buffer
+            .shape_until_scroll(&mut self.font_system);
+
+        // --- 2. Action Buttons Buffers (Botones a la derecha: Run, Stop, Clear, Zoom, Close) ---
+        let run_rect = self.terminal_btn_run_rect();
+        self.terminal_btn_run_buffer
+            .set_metrics(&mut self.font_system, Metrics::new(12.0, 16.0));
+        self.terminal_btn_run_buffer
+            .set_size(&mut self.font_system, run_rect.2, run_rect.3);
+        self.terminal_btn_run_buffer.set_text(
+            &mut self.font_system,
+            "Ejecutar",
+            base_attrs.color(Color::rgb(240, 255, 240)),
+            Shaping::Advanced,
+        );
+        self.terminal_btn_run_buffer
+            .shape_until_scroll(&mut self.font_system);
+
+        let stop_rect = self.terminal_btn_stop_rect();
+        self.terminal_btn_stop_buffer
+            .set_metrics(&mut self.font_system, Metrics::new(12.0, 16.0));
+        self.terminal_btn_stop_buffer
+            .set_size(&mut self.font_system, stop_rect.2, stop_rect.3);
+        let stop_color = if self.terminal.is_running {
+            Color::rgb(255, 240, 240)
+        } else {
+            Color::rgb(180, 180, 185)
+        };
+        self.terminal_btn_stop_buffer.set_text(
+            &mut self.font_system,
+            "Detener",
+            base_attrs.color(stop_color),
+            Shaping::Advanced,
+        );
+        self.terminal_btn_stop_buffer
+            .shape_until_scroll(&mut self.font_system);
+
+        let clear_rect = self.terminal_btn_clear_rect();
+        self.terminal_btn_clear_buffer
+            .set_metrics(&mut self.font_system, Metrics::new(12.0, 16.0));
+        self.terminal_btn_clear_buffer
+            .set_size(&mut self.font_system, clear_rect.2, clear_rect.3);
+        self.terminal_btn_clear_buffer.set_text(
+            &mut self.font_system,
+            "Limpiar",
+            base_attrs.color(Color::rgb(230, 235, 245)),
+            Shaping::Advanced,
+        );
+        self.terminal_btn_clear_buffer
+            .shape_until_scroll(&mut self.font_system);
+
+        let z_out_rect = self.terminal_btn_zoom_out_rect();
+        self.terminal_btn_zoom_out_buffer
+            .set_metrics(&mut self.font_system, Metrics::new(12.0, 16.0));
+        self.terminal_btn_zoom_out_buffer
+            .set_size(&mut self.font_system, z_out_rect.2, z_out_rect.3);
+        self.terminal_btn_zoom_out_buffer.set_text(
+            &mut self.font_system,
+            "-",
+            base_attrs.color(Color::rgb(230, 235, 245)),
+            Shaping::Advanced,
+        );
+        self.terminal_btn_zoom_out_buffer
+            .shape_until_scroll(&mut self.font_system);
+
+        let z_lbl_rect = self.terminal_btn_zoom_label_rect();
+        let zoom_pct = (self.terminal.font_scale * 100.0).round() as u32;
+        let zoom_str = format!("{zoom_pct}%");
+        self.terminal_btn_zoom_lbl_buffer
+            .set_metrics(&mut self.font_system, Metrics::new(12.0, 16.0));
+        self.terminal_btn_zoom_lbl_buffer
+            .set_size(&mut self.font_system, z_lbl_rect.2, z_lbl_rect.3);
+        self.terminal_btn_zoom_lbl_buffer.set_text(
+            &mut self.font_system,
+            &zoom_str,
+            base_attrs.color(accent_color),
+            Shaping::Advanced,
+        );
+        self.terminal_btn_zoom_lbl_buffer
+            .shape_until_scroll(&mut self.font_system);
+
+        let z_in_rect = self.terminal_btn_zoom_in_rect();
+        self.terminal_btn_zoom_in_buffer
+            .set_metrics(&mut self.font_system, Metrics::new(12.0, 16.0));
+        self.terminal_btn_zoom_in_buffer
+            .set_size(&mut self.font_system, z_in_rect.2, z_in_rect.3);
+        self.terminal_btn_zoom_in_buffer.set_text(
+            &mut self.font_system,
+            "+",
+            base_attrs.color(Color::rgb(230, 235, 245)),
+            Shaping::Advanced,
+        );
+        self.terminal_btn_zoom_in_buffer
+            .shape_until_scroll(&mut self.font_system);
+
+        let close_rect = self.terminal_btn_close_rect();
+        self.terminal_btn_close_buffer
+            .set_metrics(&mut self.font_system, Metrics::new(12.0, 16.0));
+        self.terminal_btn_close_buffer
+            .set_size(&mut self.font_system, close_rect.2, close_rect.3);
+        self.terminal_btn_close_buffer.set_text(
+            &mut self.font_system,
+            "✕",
+            base_attrs.color(Color::rgb(255, 220, 220)),
+            Shaping::Advanced,
+        );
+        self.terminal_btn_close_buffer
+            .shape_until_scroll(&mut self.font_system);
+
+        // --- 3. Output Buffer (Líneas de texto con scroll virtual) ---
+        let (_cx, _cy, cw, ch) = self.terminal_content_rect();
+        self.terminal_buffer
+            .set_metrics(&mut self.font_system, term_metrics);
+        self.terminal_buffer
+            .set_size(&mut self.font_system, cw - PADDING * 2.0, ch);
+
+        let visible_lines = (ch / line_height).floor() as usize;
+        let total_lines = self.terminal.active_lines().len();
+        let current_scroll = self.terminal.active_scroll();
+        let max_scroll = total_lines.saturating_sub(visible_lines);
+        let start = current_scroll.min(max_scroll);
+        self.terminal.set_active_scroll(start);
+
+        let lines = self.terminal.active_lines();
+        let end = (start + visible_lines + 1).min(total_lines);
+
+        let display_content = if lines.is_empty() {
+            match self.terminal.active_tab {
+                crate::terminal::TerminalTab::Output => {
+                    "No hay salida todavía. Presiona F5 o haz clic en [Ejecutar] para compilar y correr el archivo activo."
+                }
+                crate::terminal::TerminalTab::Shell => "Terminal interactiva iniciada.",
+            }
+            .to_string()
+        } else {
+            lines[start..end].join("\n")
+        };
+
+        let is_rgb = self.settings.is_rgb_active(crate::settings::RgbElement::Terminal);
+        let text_color = if is_rgb {
+            let [r, g, b] = crate::color::chroma_rgb_f32(self.anim_time, 0.0);
+            Color::rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
+        } else {
+            let tc_u8 = self.settings.color_for(Some("terminal_text"));
+            Color::rgb(tc_u8[0], tc_u8[1], tc_u8[2])
+        };
+
+        self.terminal_buffer.set_text(
+            &mut self.font_system,
+            &display_content,
+            base_attrs.color(text_color),
+            Shaping::Advanced,
+        );
+        self.terminal_buffer
+            .shape_until_scroll(&mut self.font_system);
+
+        // --- 4. Input Buffer (Barra de entrada inferior) ---
+        let (_ix, _iy, iw, ih) = self.terminal_input_rect();
+        self.terminal_input_buffer
+            .set_metrics(&mut self.font_system, term_metrics);
+        self.terminal_input_buffer
+            .set_size(&mut self.font_system, iw - PADDING * 2.0, ih);
+
+        let prompt_prefix = match self.terminal.active_tab {
+            crate::terminal::TerminalTab::Output => {
+                if self.terminal.is_running {
+                    "stdin > "
+                } else {
+                    "> "
+                }
+            }
+            crate::terminal::TerminalTab::Shell => "cmd > ",
+        };
+
+        let input_display = if self.terminal.input_line.is_empty() && !self.terminal_focused {
+            format!("{prompt_prefix}(haz clic aquí para interactuar o enviar stdin)")
+        } else {
+            format!("{prompt_prefix}{}", self.terminal.input_line)
+        };
+
+        let input_color = if self.terminal.input_line.is_empty() && !self.terminal_focused {
+            Color::rgb(130, 135, 150)
+        } else {
+            text_color
+        };
+
+        self.terminal_input_buffer.set_text(
+            &mut self.font_system,
+            &input_display,
+            base_attrs.color(input_color),
+            Shaping::Advanced,
+        );
+        self.terminal_input_buffer
+            .shape_until_scroll(&mut self.font_system);
     }
 
     pub fn open_menu(&mut self, menu: TopMenu) {
@@ -1084,7 +1557,8 @@ impl TextState {
         spans.push((" Ver ", base_attrs.color(if self.active_menu == Some(TopMenu::Ver) { active_color } else { normal_color })));
         spans.push((" Lenguaje ", base_attrs.color(if self.active_menu == Some(TopMenu::Lenguaje) { active_color } else { normal_color })));
         spans.push((" Configuración ", base_attrs.color(if self.active_menu == Some(TopMenu::Configuracion) { active_color } else { normal_color })));
-        spans.push((" Terminal ", base_attrs.color(normal_color)));
+        spans.push((" ▶ Ejecutar ", base_attrs.color(Color::rgb(70, 215, 120))));
+        spans.push((" 💻 Terminal ", base_attrs.color(normal_color)));
 
         self.toolbar_buffer.set_rich_text(&mut self.font_system, spans, Shaping::Advanced);
         self.toolbar_buffer.shape_until_scroll(&mut self.font_system);
@@ -2402,7 +2876,10 @@ impl TextState {
     /// Â¿El punto (x, y) cae dentro del área de texto (no en la barra de
     /// herramientas, pestañas, panel abierto o selector abierto)?
     pub fn is_in_text_area(&self, x: f32, y: f32) -> bool {
+        let term_h = if self.terminal.is_open { self.terminal.height } else { 0.0 };
+        let max_y = self.viewport_height - term_h;
         y >= TOP_OFFSET
+            && y < max_y
             && !self.panel_contains(x, y)
             && !self.picker_contains(x, y)
             && !self.menu_contains(x, y)
@@ -2817,18 +3294,12 @@ impl TextState {
     pub fn resize(&mut self, width: u32, height: u32) {
         self.viewport_width = width as f32;
         self.viewport_height = height as f32;
-        let w = width as f32 - PADDING * 2.0 - GUTTER_WIDTH;
-        let term_h = if self.terminal.is_open { TERMINAL_HEIGHT } else { 0.0 };
-        let h = height as f32 - TOP_OFFSET - term_h;
-        let doc = &mut self.documents[self.active];
-        doc.buffer.set_size(&mut self.font_system, w, h);
+        self.update_viewport_sizes();
         self.toolbar_buffer
             .set_size(&mut self.font_system, width as f32, TOOLBAR_HEIGHT);
         self.tab_buffer
             .set_size(&mut self.font_system, width as f32, TAB_HEIGHT);
-        self.line_numbers_buffer
-            .set_size(&mut self.font_system, GUTTER_WIDTH - 8.0, h);
-        self.ensure_cursor_visible();
+        self.rebuild_terminal_buffer();
         self.dirty = true;
     }
 
@@ -3046,7 +3517,7 @@ impl TextState {
         }
 
         if self.terminal.is_open {
-            let (tx, ty, tw, th) = self.terminal_rect();
+            let (_tx, ty, _tw, _th) = self.terminal_rect();
             let is_rgb = self.settings.is_rgb_active(crate::settings::RgbElement::Terminal);
             let tc = if is_rgb {
                 let [r, g, b] = crate::color::chroma_rgb_f32(self.anim_time, 0.0);
@@ -3055,16 +3526,167 @@ impl TextState {
                 let tc_u8 = self.settings.color_for(Some("terminal_text"));
                 glyphon::Color::rgb(tc_u8[0], tc_u8[1], tc_u8[2])
             };
+
+            // 1. Pestañas del header
             base_areas.push(TextArea {
-                buffer: &self.terminal_buffer,
-                left: PADDING,
-                top: ty + PADDING / 2.0,
+                buffer: &self.terminal_header_buffer,
+                left: 6.0,
+                top: ty + 4.0,
                 scale: 1.0,
                 bounds: TextBounds {
                     left: 0,
                     top: ty as i32,
+                    right: (width as f32 - 415.0) as i32,
+                    bottom: (ty + 28.0) as i32,
+                },
+                default_color: tc,
+            });
+
+            // 2. Botones del header a la derecha
+            let run_rect = self.terminal_btn_run_rect();
+            let stop_rect = self.terminal_btn_stop_rect();
+            let clear_rect = self.terminal_btn_clear_rect();
+            let z_out_rect = self.terminal_btn_zoom_out_rect();
+            let z_lbl_rect = self.terminal_btn_zoom_label_rect();
+            let z_in_rect = self.terminal_btn_zoom_in_rect();
+            let close_rect = self.terminal_btn_close_rect();
+
+            // Run
+            base_areas.push(TextArea {
+                buffer: &self.terminal_btn_run_buffer,
+                left: run_rect.0 + 12.0,
+                top: ty + 6.0,
+                scale: 1.0,
+                bounds: TextBounds {
+                    left: run_rect.0 as i32,
+                    top: ty as i32,
+                    right: (run_rect.0 + run_rect.2) as i32,
+                    bottom: (ty + 28.0) as i32,
+                },
+                default_color: tc,
+            });
+
+            // Stop
+            base_areas.push(TextArea {
+                buffer: &self.terminal_btn_stop_buffer,
+                left: stop_rect.0 + 12.0,
+                top: ty + 6.0,
+                scale: 1.0,
+                bounds: TextBounds {
+                    left: stop_rect.0 as i32,
+                    top: ty as i32,
+                    right: (stop_rect.0 + stop_rect.2) as i32,
+                    bottom: (ty + 28.0) as i32,
+                },
+                default_color: tc,
+            });
+
+            // Clear
+            base_areas.push(TextArea {
+                buffer: &self.terminal_btn_clear_buffer,
+                left: clear_rect.0 + 11.0,
+                top: ty + 6.0,
+                scale: 1.0,
+                bounds: TextBounds {
+                    left: clear_rect.0 as i32,
+                    top: ty as i32,
+                    right: (clear_rect.0 + clear_rect.2) as i32,
+                    bottom: (ty + 28.0) as i32,
+                },
+                default_color: tc,
+            });
+
+            // Zoom Out (-)
+            base_areas.push(TextArea {
+                buffer: &self.terminal_btn_zoom_out_buffer,
+                left: z_out_rect.0 + 9.0,
+                top: ty + 6.0,
+                scale: 1.0,
+                bounds: TextBounds {
+                    left: z_out_rect.0 as i32,
+                    top: ty as i32,
+                    right: (z_out_rect.0 + z_out_rect.2) as i32,
+                    bottom: (ty + 28.0) as i32,
+                },
+                default_color: tc,
+            });
+
+            // Zoom Label (100%)
+            let zoom_pct = (self.terminal.font_scale * 100.0).round() as u32;
+            let zoom_chars = if zoom_pct >= 100 { 4 } else { 3 };
+            let pad_lbl = ((z_lbl_rect.2 - zoom_chars as f32 * 7.2) / 2.0).max(2.0);
+            base_areas.push(TextArea {
+                buffer: &self.terminal_btn_zoom_lbl_buffer,
+                left: z_lbl_rect.0 + pad_lbl,
+                top: ty + 6.0,
+                scale: 1.0,
+                bounds: TextBounds {
+                    left: z_lbl_rect.0 as i32,
+                    top: ty as i32,
+                    right: (z_lbl_rect.0 + z_lbl_rect.2) as i32,
+                    bottom: (ty + 28.0) as i32,
+                },
+                default_color: tc,
+            });
+
+            // Zoom In (+)
+            base_areas.push(TextArea {
+                buffer: &self.terminal_btn_zoom_in_buffer,
+                left: z_in_rect.0 + 9.0,
+                top: ty + 6.0,
+                scale: 1.0,
+                bounds: TextBounds {
+                    left: z_in_rect.0 as i32,
+                    top: ty as i32,
+                    right: (z_in_rect.0 + z_in_rect.2) as i32,
+                    bottom: (ty + 28.0) as i32,
+                },
+                default_color: tc,
+            });
+
+            // Close (✕)
+            base_areas.push(TextArea {
+                buffer: &self.terminal_btn_close_buffer,
+                left: close_rect.0 + 10.0,
+                top: ty + 6.0,
+                scale: 1.0,
+                bounds: TextBounds {
+                    left: close_rect.0 as i32,
+                    top: ty as i32,
+                    right: (close_rect.0 + close_rect.2) as i32,
+                    bottom: (ty + 28.0) as i32,
+                },
+                default_color: tc,
+            });
+
+            // 3. Contenido de salida con recorte estricto
+            let (_cx, cy, _cw, ch) = self.terminal_content_rect();
+            base_areas.push(TextArea {
+                buffer: &self.terminal_buffer,
+                left: PADDING,
+                top: cy + 4.0,
+                scale: 1.0,
+                bounds: TextBounds {
+                    left: 0,
+                    top: cy as i32,
+                    right: (width as f32 - 16.0) as i32,
+                    bottom: (cy + ch) as i32,
+                },
+                default_color: tc,
+            });
+
+            // 4. Barra de entrada inferior
+            let (_ix, iy, _iw, _ih) = self.terminal_input_rect();
+            base_areas.push(TextArea {
+                buffer: &self.terminal_input_buffer,
+                left: PADDING,
+                top: iy + 5.0,
+                scale: 1.0,
+                bounds: TextBounds {
+                    left: 0,
+                    top: iy as i32,
                     right: width as i32,
-                    bottom: height as i32,
+                    bottom: (iy + 28.0) as i32,
                 },
                 default_color: tc,
             });
@@ -3684,5 +4306,137 @@ mod tests {
         for elem in RgbElement::ALL {
             assert!(editor.panel_rows.iter().any(|r| r.action == Some(PanelAction::ToggleRgbElement(elem))));
         }
+    }
+
+    #[test]
+    fn test_terminal_zoom_and_layout_hits() {
+        let Some(mut editor) = create_test_editor() else { return; };
+        assert_eq!(editor.terminal.font_scale, 1.0);
+        assert_eq!(editor.terminal.eff_font_size(), 13.0);
+        assert_eq!(editor.terminal.eff_line_height(), 18.0);
+
+        // Zoom in
+        editor.terminal_zoom(0.2);
+        assert!((editor.terminal.font_scale - 1.2).abs() < 1e-4);
+        assert!((editor.terminal.eff_font_size() - 15.6).abs() < 1e-4);
+        assert!((editor.terminal.eff_line_height() - 21.6).abs() < 1e-4);
+
+        // Zoom out
+        editor.terminal_zoom(-0.5);
+        assert!((editor.terminal.font_scale - 0.7).abs() < 1e-4);
+
+        // Zoom reset
+        editor.terminal_zoom_reset();
+        assert_eq!(editor.terminal.font_scale, 1.0);
+
+        // Hit testing en todos los botones del header del dock
+        editor.toggle_terminal();
+        assert!(editor.terminal.is_open);
+        let run_rect = editor.terminal_btn_run_rect();
+        assert_eq!(editor.terminal_hit_test(run_rect.0 + 2.0, run_rect.1 + 2.0), Some(TerminalHit::BtnRun));
+        let stop_rect = editor.terminal_btn_stop_rect();
+        assert_eq!(editor.terminal_hit_test(stop_rect.0 + 2.0, stop_rect.1 + 2.0), Some(TerminalHit::BtnStop));
+        let clear_rect = editor.terminal_btn_clear_rect();
+        assert_eq!(editor.terminal_hit_test(clear_rect.0 + 2.0, clear_rect.1 + 2.0), Some(TerminalHit::BtnClear));
+        let z_in_rect = editor.terminal_btn_zoom_in_rect();
+        assert_eq!(editor.terminal_hit_test(z_in_rect.0 + 2.0, z_in_rect.1 + 2.0), Some(TerminalHit::BtnZoomIn));
+        let z_out_rect = editor.terminal_btn_zoom_out_rect();
+        assert_eq!(editor.terminal_hit_test(z_out_rect.0 + 2.0, z_out_rect.1 + 2.0), Some(TerminalHit::BtnZoomOut));
+        let z_lbl_rect = editor.terminal_btn_zoom_label_rect();
+        assert_eq!(editor.terminal_hit_test(z_lbl_rect.0 + 2.0, z_lbl_rect.1 + 2.0), Some(TerminalHit::BtnZoomReset));
+        let close_rect = editor.terminal_btn_close_rect();
+        assert_eq!(editor.terminal_hit_test(close_rect.0 + 2.0, close_rect.1 + 2.0), Some(TerminalHit::BtnClose));
+    }
+
+    #[test]
+    fn test_execute_c_and_python_runner() {
+        let mut term = crate::terminal::TerminalState::new();
+        let py_path = std::path::Path::new("C:/Users/diego/Downloads/prueba.py");
+        if py_path.exists() {
+            term.start_run(py_path, Language::Python);
+            assert!(term.is_running);
+            for _ in 0..60 {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                term.poll();
+                if !term.is_running {
+                    break;
+                }
+            }
+            let output = term.output_lines.join("\n");
+            assert!(output.contains("Elementos procesados: 5"), "Python Output: {output}");
+            assert!(output.contains("El promedio final es: 32.00"), "Python Output: {output}");
+            // Comprobar que 'Elementos procesados: 5' es una línea limpia e independiente (no pegada a los separadores)
+            assert!(
+                term.output_lines.iter().any(|l| l.trim() == "Elementos procesados: 5"),
+                "Debe ser una línea separada sin mezclarse con ====: {output}"
+            );
+        }
+
+        let c_path = std::path::Path::new("C:/Users/diego/Downloads/prueba.c");
+        if c_path.exists() {
+            term.start_run(c_path, Language::C);
+            assert!(term.is_running);
+            for _ in 0..100 {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                term.poll();
+                if !term.is_running {
+                    break;
+                }
+            }
+            let output = term.output_lines.join("\n");
+            assert!(output.contains("Elementos procesados: 5"), "C Output: {output}");
+            assert!(output.contains("El promedio final es: 30.00"), "C Output: {output}");
+            // Comprobar que en C también es una línea limpia e independiente
+            assert!(
+                term.output_lines.iter().any(|l| l.trim() == "Elementos procesados: 5"),
+                "Debe ser una línea separada sin mezclarse con ====: {output}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_open_file_as_tab_replaces_virgin_and_detects_language() {
+        let Some(mut editor) = create_test_editor() else { return; };
+        assert_eq!(editor.tab_count(), 1);
+        assert_eq!(editor.active_title(), "Sin título 1.txt");
+
+        // Abrir un archivo HTML como primer archivo debe reemplazar la pestaña virgen inicial
+        let html_path = PathBuf::from("C:/test/index.html");
+        editor.open_file_as_tab(html_path.clone(), "<h1>Hola Mundo</h1>");
+        assert_eq!(editor.tab_count(), 1);
+        assert_eq!(editor.active_title(), "index.html");
+        assert_eq!(editor.active_language(), Language::Html);
+        assert_eq!(editor.active_file_path(), Some(html_path));
+        assert_eq!(editor.full_text(), "<h1>Hola Mundo</h1>");
+
+        // Abrir un segundo archivo CSS debe agregarse como segunda pestaña (no reemplazar la primera)
+        let css_path = PathBuf::from("C:/test/style.css");
+        editor.open_file_as_tab(css_path.clone(), "body { color: red; }");
+        assert_eq!(editor.tab_count(), 2);
+        assert_eq!(editor.active_title(), "style.css");
+        assert_eq!(editor.active_language(), Language::Css);
+        assert_eq!(editor.active_file_path(), Some(css_path));
+    }
+
+    #[test]
+    fn test_create_and_open_new_html_file() {
+        let temp_dir = std::env::temp_dir();
+        let html_file = temp_dir.join("test_amoxli_crear.html");
+        if html_file.exists() {
+            let _ = std::fs::remove_file(&html_file);
+        }
+
+        // Simular creación del archivo por el editor/CLI
+        std::fs::write(&html_file, "").expect("Debe crearse el archivo");
+        assert!(html_file.exists());
+
+        let Some(mut editor) = create_test_editor() else { return; };
+        editor.open_file_as_tab(html_file.clone(), "");
+        assert_eq!(editor.active_title(), "test_amoxli_crear.html");
+        assert_eq!(editor.active_language(), Language::Html);
+        assert_eq!(editor.active_file_path(), Some(html_file.clone()));
+
+        // Limpieza
+        let _ = std::fs::remove_file(&html_file);
     }
 }

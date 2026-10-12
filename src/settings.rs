@@ -184,6 +184,10 @@ pub struct Settings {
     #[serde(default)]
     pub rgb_terminal: bool,
 
+    /// Nivel de zoom de la terminal integrada (1.0 = 100%).
+    #[serde(default = "default_terminal_font_scale")]
+    pub terminal_font_scale: f32,
+
     /// Presets de colores guardados por el usuario, con nombre.
     #[serde(default)]
     pub presets: Vec<ColorPreset>,
@@ -192,6 +196,10 @@ pub struct Settings {
     /// "select_all".
     #[serde(default)]
     pub sounds: HashMap<String, PathBuf>,
+}
+
+fn default_terminal_font_scale() -> f32 {
+    1.0
 }
 
 fn default_editor_opacity() -> f32 {
@@ -236,6 +244,7 @@ impl Default for Settings {
             topbar_opacity: 0.96,
             terminal_opacity: 0.90,
             scrollbar_opacity: 0.75,
+            terminal_font_scale: 1.0,
             rgb_topbar: true,
             rgb_syntax: true,
             rgb_cursor: true,
@@ -415,7 +424,7 @@ impl Settings {
             61..=80 => 0.85,
             81..=90 => 0.92,
             91..=97 => 1.00,
-            _ => 0.00,
+            _ => 0.50,
         };
     }
 

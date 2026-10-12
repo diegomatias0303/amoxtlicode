@@ -1,33 +1,24 @@
 {
   "background": "None",
   "theme": "OneDark",
-  "custom_colors": {
-    "function": "#7561EF",
-    "terminal_text": "#FD0909",
-    "comment": "#FD1406",
-    "terminal_bg": "#DC1FA2",
-    "number": "#F834AB",
-    "line_numbers": "#EF76E1",
-    "string": "#00F1F8"
-  },
+  "custom_colors": {},
   "font_family": "monospace",
   "rgb_gamer_mode": true,
-  "editor_opacity": 0.5,
-  "marker_opacity": 0.85,
-  "menu_opacity": 1.0,
-  "topbar_opacity": 0.7,
-  "terminal_opacity": 1.0,
-  "scrollbar_opacity": 0.3,
+  "editor_opacity": 0.85,
+  "marker_opacity": 0.3,
+  "menu_opacity": 0.96,
+  "topbar_opacity": 0.96,
+  "terminal_opacity": 0.9,
+  "scrollbar_opacity": 0.75,
   "rgb_topbar": true,
   "rgb_syntax": false,
   "rgb_cursor": true,
   "rgb_menus": true,
   "rgb_scrollbar": true,
-  "rgb_markers": false,
-  "rgb_line_numbers": true,
-  "rgb_terminal": true,
+  "rgb_markers": true,
+  "rgb_line_numbers": false,
+  "rgb_terminal": false,
+  "terminal_font_scale": 1.0,
   "presets": [],
-  "sounds": {
-    "keypress": "C:\\Users\\diego\\Downloads\\uwu (mp3cut.net).mp3"
-  }
+  "sounds": {}
 }

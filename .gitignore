@@ -1,4 +1,4 @@
-﻿/target/
+/target/
 **/*.rs.bk
 Cargo.lock
 
@@ -6,6 +6,8 @@ Cargo.lock
 assets/*.mp4
 assets/*.mov
 
-# Archivos de debug
+# Archivos de debug y binarios
 *.log
 *.py
+*.pdb
+/Output/
