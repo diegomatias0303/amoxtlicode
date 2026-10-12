@@ -53,6 +53,12 @@ impl RunnerProcess {
                         .creation_flags(0x0800_0000)
                         .status();
                 }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let _ = Command::new("pkill")
+                        .args(["-P", &pid.to_string()])
+                        .status();
+                }
                 let _ = c.kill();
             }
         }

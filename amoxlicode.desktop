@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=AmoxliCode
+Comment=IDE ultraligero con aceleracion GPU en Rust
+Exec=amoxlicode %F
+Icon=amoxlicode
+Terminal=false
+Type=Application
+Categories=Development;IDE;TextEditor;
+MimeType=text/plain;text/x-c;text/x-c++;text/x-rust;text/x-python;text/x-java;application/javascript;text/html;text/css;
+StartupNotify=true
+Keywords=text;editor;ide;code;rust;gpu;

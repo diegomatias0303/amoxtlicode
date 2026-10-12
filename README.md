@@ -265,25 +265,64 @@ Tree-Sitter y un panel de ejecucion runner integrado estilo NetBeans / Visual St
 
 Requisitos previos:
 * Rust toolchain (cargo, rustc >= 1.75): https://rustup.rs
-* Windows 10/11 x64 o Linux con drivers Vulkan / DirectX 12 compatibles.
+* **Windows:** Windows 10/11 x64 con soporte para DirectX 12 o Vulkan.
+* **Linux:** Distribución x86_64 con soporte para Vulkan / OpenGL y librerías de desarrollo instaladas.
 
-```powershell
+#### Dependencias del sistema en Linux:
+```bash
+# Ubuntu / Debian / Pop!_OS:
+sudo apt update && sudo apt install -y \
+  build-essential pkg-config clang libasound2-dev \
+  libvulkan-dev libx11-dev libxcb1-dev libxcursor-dev \
+  libxrandr-dev libxi-dev libwayland-dev \
+  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
+
+# Fedora / RHEL:
+sudo dnf install -y \
+  gcc gcc-c++ clang pkgconf-pkg-config alsa-lib-devel \
+  vulkan-loader-devel libX11-devel libXcursor-devel libXrandr-devel \
+  libXi-devel wayland-devel ffmpeg-free-devel
+
+# Arch Linux / Manjaro:
+sudo pacman -S --needed \
+  base-devel clang alsa-lib vulkan-icd-loader libx11 \
+  libxcursor libxrandr libxi wayland ffmpeg
+```
+
+#### Compilación y Ejecución:
+```bash
 # 1. Clonar el repositorio
 git clone https://github.com/diegomatias0303/amoxtlicode.git
 cd amoxtlicode
 
-# 2. Verificacion rapida de tipos
+# 2. Verificación rápida de tipos
 cargo check
 
-# 3. Compilar binario de distribucion optimizado (LTO + opt-level 3)
+# 3. Compilar binario optimizado para distribución (LTO + opt-level 3)
 cargo build --release
 
-# 4. Ejecutar
+# 4. Ejecutar:
+# En Windows (PowerShell):
 .\target\release\amoxlicode.exe
+
+# En Linux:
+./target/release/amoxlicode
 ```
 
-Para generar el instalador de Windows:
-```powershell
-# Abrir installer.iss con Inno Setup Compiler o ejecutar:
-iscc installer.iss
-```
+#### Empaquetado e Instalación:
+* **Windows:**
+  ```powershell
+  # Crear paquete ZIP portable:
+  powershell -File empaquetar.ps1
+
+  # O compilar instalador con Inno Setup:
+  iscc installer.iss
+  ```
+* **Linux:**
+  ```bash
+  # Instalar en el sistema / menú de aplicaciones:
+  chmod +x install.sh && ./install.sh
+
+  # O crear paquete portable comprimido (.tar.gz):
+  chmod +x package-linux.sh && ./package-linux.sh
+  ```

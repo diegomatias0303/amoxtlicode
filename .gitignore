@@ -11,3 +11,7 @@ assets/*.mov
 *.py
 *.pdb
 /Output/
+*.zip
+*.tar.gz
+AmoxliCode_Portable/
+AmoxliCode_Linux_Portable/

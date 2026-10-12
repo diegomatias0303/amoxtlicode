@@ -649,10 +649,8 @@ impl RenderState {
         self.text_state.rebuild_terminal_buffer();
     }
 
-    /// Abre una ventana nueva de PowerShell, ya parada en la carpeta del
-    /// archivo activo (o en la carpeta actual si el archivo nunca se ha
-    /// guardado). No nos importa qué compilador tenga instalado la
-    /// persona — eso corre por su cuenta, aquí solo le damos la terminal.
+    /// Abre una ventana nueva de terminal externa en la carpeta del archivo activo.
+    #[cfg(target_os = "windows")]
     fn open_terminal_here(&self) {
         let dir = self
             .text_state
@@ -669,19 +667,57 @@ impl RenderState {
             .arg("-Command")
             .arg(format!("Set-Location -LiteralPath '{dir_str}'"));
 
-        // Sin esto, si AmoxliCode se lanzó desde una terminal ya abierta
-        // (ej. con `cargo run`), la nueva PowerShell se "cuela" en esa
-        // misma ventana en vez de abrir una propia. CREATE_NEW_CONSOLE
-        // fuerza a Windows a darle su propia ventana siempre.
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
-            cmd.creation_flags(CREATE_NEW_CONSOLE);
-        }
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+        cmd.creation_flags(CREATE_NEW_CONSOLE);
 
         if let Err(e) = cmd.spawn() {
             error!("no se pudo abrir la terminal: {e:?}");
+        }
+    }
+
+    /// Abre una ventana nueva de terminal externa en Linux/Unix en la carpeta del archivo activo.
+    #[cfg(not(target_os = "windows"))]
+    fn open_terminal_here(&self) {
+        let dir = self
+            .text_state
+            .active_file_path()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .filter(|d| d.as_os_str().len() > 0)
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+        let terminals = [
+            ("x-terminal-emulator", vec!["--working-directory"]),
+            ("gnome-terminal", vec!["--working-directory"]),
+            ("konsole", vec!["--workdir"]),
+            ("xfce4-terminal", vec!["--working-directory"]),
+            ("alacritty", vec!["--working-directory"]),
+            ("kitty", vec!["--directory"]),
+            ("xterm", vec![]),
+        ];
+
+        let mut launched = false;
+        let dir_str = dir.to_string_lossy();
+        for (term, args) in terminals {
+            let mut cmd = std::process::Command::new(term);
+            cmd.current_dir(&dir);
+            if !args.is_empty() {
+                cmd.args(args).arg(dir_str.as_ref());
+            }
+            if cmd.spawn().is_ok() {
+                launched = true;
+                break;
+            }
+        }
+        if !launched {
+            if let Ok(term) = std::env::var("TERMINAL") {
+                let mut cmd = std::process::Command::new(term);
+                cmd.current_dir(&dir);
+                let _ = cmd.spawn();
+            } else {
+                error!("no se encontró ningún emulador de terminal compatible en el sistema");
+            }
         }
     }
 
