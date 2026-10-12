@@ -24,7 +24,7 @@ jobs:
             libasound2-dev libvulkan-dev \
             libx11-dev libxcb1-dev libxcursor-dev libxrandr-dev libxi-dev \
             libwayland-dev libavcodec-dev libavformat-dev libavutil-dev \
-            libswscale-dev libswresample-dev
+            libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

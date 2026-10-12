@@ -275,7 +275,8 @@ sudo apt update && sudo apt install -y \
   build-essential pkg-config clang libasound2-dev \
   libvulkan-dev libx11-dev libxcb1-dev libxcursor-dev \
   libxrandr-dev libxi-dev libwayland-dev \
-  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
+  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
+  libavfilter-dev libavdevice-dev
 
 # Fedora / RHEL:
 sudo dnf install -y \
