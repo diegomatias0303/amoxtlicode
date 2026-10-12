@@ -2513,24 +2513,54 @@ fn main() -> Result<()> {
                                 state.play_sound("keypress");
                             }
                             Key::Named(NamedKey::Backspace) => {
-                                state.text_state.backspace();
+                                if state.modifiers.control_key() {
+                                    state.text_state.delete_word_left();
+                                } else {
+                                    state.text_state.backspace();
+                                }
                                 state.play_sound("keypress");
                             }
                             Key::Named(NamedKey::Delete) => {
-                                state.text_state.delete_forward();
+                                if state.modifiers.control_key() {
+                                    state.text_state.delete_word_right();
+                                } else {
+                                    state.text_state.delete_forward();
+                                }
                                 state.play_sound("keypress");
                             }
                             Key::Named(NamedKey::ArrowLeft) => {
-                                state.text_state.move_cursor(-1, 0, state.modifiers.shift_key());
+                                if state.modifiers.control_key() {
+                                    state.text_state.move_cursor_by_word(-1, state.modifiers.shift_key());
+                                } else {
+                                    state.text_state.move_cursor(-1, 0, state.modifiers.shift_key());
+                                }
                             }
                             Key::Named(NamedKey::ArrowRight) => {
-                                state.text_state.move_cursor(1, 0, state.modifiers.shift_key());
+                                if state.modifiers.control_key() {
+                                    state.text_state.move_cursor_by_word(1, state.modifiers.shift_key());
+                                } else {
+                                    state.text_state.move_cursor(1, 0, state.modifiers.shift_key());
+                                }
                             }
                             Key::Named(NamedKey::ArrowUp) => {
-                                state.text_state.move_cursor(0, -1, state.modifiers.shift_key());
+                                if state.modifiers.control_key() {
+                                    state.text_state.move_cursor_paragraph(-1, state.modifiers.shift_key());
+                                } else {
+                                    state.text_state.move_cursor(0, -1, state.modifiers.shift_key());
+                                }
                             }
                             Key::Named(NamedKey::ArrowDown) => {
-                                state.text_state.move_cursor(0, 1, state.modifiers.shift_key());
+                                if state.modifiers.control_key() {
+                                    state.text_state.move_cursor_paragraph(1, state.modifiers.shift_key());
+                                } else {
+                                    state.text_state.move_cursor(0, 1, state.modifiers.shift_key());
+                                }
+                            }
+                            Key::Named(NamedKey::Home) => {
+                                state.text_state.move_cursor_home(state.modifiers.control_key(), state.modifiers.shift_key());
+                            }
+                            Key::Named(NamedKey::End) => {
+                                state.text_state.move_cursor_end(state.modifiers.control_key(), state.modifiers.shift_key());
                             }
                             _ => {
                                 // Caracteres normales (letras, números,
