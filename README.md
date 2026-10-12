@@ -1,168 +1,212 @@
-# 📜 AmoxliCode IDE
-
-> **AmoxliCode** (del náhuatl *Amoxtli* — libro/códice del conocimiento — y *Code*) es un entorno de desarrollo integrado (IDE) ultraligero y de alto rendimiento escrito en **Rust**, acelerado por **GPU (WGPU)** y diseñado para combinar la velocidad y el bajísimo consumo de memoria de Notepad++ (~15–30 MB RAM) con la estética moderna, aceleración gráfica y capacidades inteligentes de un editor contemporáneo.
-
----
-
-## 🤖 Protocolo para IA / Agente de Código (Continuidad de Contexto)
-
-> **IMPORTANTE PARA AGENTES IA:** Si este chat se reinicia, se compacta o se abre en una nueva sesión, **este README es tu fuente de verdad**. Léelo para entender inmediatamente la arquitectura, el estado actual, las reglas del código y continuar trabajando sin perder el rumbo.
-
-### 📌 Modelo Mental del Código
-1. **Pipeline de Renderizado 2D por GPU:**
-   - AmoxliCode **no usa Electron ni WebView**. Es un motor gráfico 2D nativo con `winit` y `wgpu`.
-   - Bucle a 60 FPS bloqueado con V-Sync (`PresentMode::Fifo`).
-   - Capa 0: Fondo dinámico (Video MP4/GIF vía FFmpeg o gradientes interactivos RGB).
-   - Capa 1: Rectángulos y paneles UI dibujados mediante un pipeline de quads de vértices sólidos (`src/solid_quad.wgsl`).
-   - Capa 2: Texto renderizado con `cosmic-text` y `glyphon` con caché de glifos en GPU.
-2. **Reglas de Oro de Arquitectura (¡NO ROMPER!):**
-   - **Nunca bloquear el bucle principal:** Todo trabajo pesado (FFmpeg, compilación, terminal, procesos) corre en hilos separados con canales `crossbeam-channel` o `std::sync::mpsc`.
-   - **Aislamiento de clics en la UI:** Cualquier nuevo panel, ventana flotante o dock debe estar excluido en `is_in_text_area()` de [`src/editor.rs`](file:///D:/herramientas/amoxtlicode/amoxtlicode/src/editor.rs) para evitar que los clics del ratón muevan el cursor o seleccionen texto por detrás.
-   - **Scissoring de texto con cosmic-text:** Para evitar que el texto se dibuje fuera de su panel (bleed), usa rebanado de líneas (`lines[start..end].join("\n")`) y `bounds: TextBounds` en el `TextArea`.
-   - **Manejo de procesos en Windows:** Al lanzar procesos (`Command`), usar siempre `.creation_flags(0x0800_0000)` (`CREATE_NO_WINDOW`) para evitar popups negros de consola. Al terminarlos, invocar `taskkill /F /T /PID` para eliminar todo el árbol de procesos hijos.
-3. **Comandos de Verificación Inmediata:**
-   ```powershell
-   cargo check        # Validación rápida de tipos y préstamos
-   cargo build        # Compilación completa del binario de desarrollo
-   cargo run          # Ejecución de prueba
-   ```
-
----
-
-## 📂 Mapa de Módulos del Proyecto (`src/`)
-
-| Archivo | Responsabilidad Principal |
-| :--- | :--- |
-| [`src/main.rs`](file:///D:/herramientas/amoxtlicode/amoxtlicode/src/main.rs) | Bucle de eventos `winit`, inicialización `wgpu`, render pass unificado, despacho de eventos de ratón/teclado y atajos globales. |
-| [`src/editor.rs`](file:///D:/herramientas/amoxtlicode/amoxtlicode/src/editor.rs) | Núcleo del editor: buffers de texto, tabs, cursor, selección, layout geométrico del dock, scroll y preparación para Glyphon. |
-| [`src/terminal.rs`](file:///D:/herramientas/amoxtlicode/amoxtlicode/src/terminal.rs) | Panel dock inferior: Runner directo (NetBeans/VS style), gestión de procesos en background, streaming stdout/stderr, entrada stdin interactiva y shell. |
-| [`src/syntax.rs`](file:///D:/herramientas/amoxtlicode/amoxtlicode/src/syntax.rs) | Resaltado sintáctico AST mediante Tree-Sitter (C, Java, JS, HTML, CSS, SQL, Rust, etc.). |
-| [`src/settings.rs`](file:///D:/herramientas/amoxtlicode/amoxtlicode/src/settings.rs) | Menú de configuración interactivo: temas, paletas personalizadas, opacidades y modo RGB gamer. |
-| [`src/lsp.rs`](file:///D:/herramientas/amoxtlicode/amoxtlicode/src/lsp.rs) | Cliente y protocolo LSP (Language Server Protocol) y popup de autocompletado flotante. |
-| [`src/gradient.rs`](file:///D:/herramientas/amoxtlicode/amoxtlicode/src/gradient.rs) | Pipeline y buffers de gradientes y efectos cromáticos en GPU. |
-| [`src/video.rs`](file:///D:/herramientas/amoxtlicode/amoxtlicode/src/video.rs) | Decodificación y carga de cuadros de video en segundo plano vía FFmpeg. |
-| [`src/ui.rs`](file:///D:/herramientas/amoxtlicode/amoxtlicode/src/ui.rs) | Detección de clics en menús y cajas delimitadoras. |
-| [`src/color.rs`](file:///D:/herramientas/amoxtlicode/amoxtlicode/src/color.rs) | Utilidades de conversión y manipulación de color (RGBA, Hex). |
-| [`src/audio.rs`](file:///D:/herramientas/amoxtlicode/amoxtlicode/src/audio.rs) | Efectos de sonido y retroalimentación auditiva mecánica al teclear. |
-
----
-
-## ✨ Características y Estado Actual
-
-- [x] **Motor de edición veloz:** Edición de texto con selección por ratón y teclado, portapapeles (`Ctrl+C`, `Ctrl+V`, `Ctrl+X`), deshacer/rehacer (`Ctrl+Z`, `Ctrl+Y`).
-- [x] **Panel de Ejecución Integrado (NetBeans / Visual Studio style):**
-  - **Pestaña `▶ Salida`:** Guarda y ejecuta el archivo actual al presionar `F5` o el botón `[▶ Ejecutar]`. Muestra el comando exacto, directorio, salida en tiempo real en una línea limpia (sin mezclar texto con separadores), tiempo transcurrido y código de salida (`0 OK` o error).
-  - **Botones de cabecera alineados píxel-perfect:** `[Ejecutar]`, `[Detener]`, `[Limpiar]`, `[-]`, `[100%]`, `[+]`, `[✕]` perfectamente centrados en sus cajas de color individuales con respuesta táctil y resaltado al pasar el ratón (*hover*).
-  - **Entrada estándar interactiva (`stdin`):** Permite escribir respuestas para programas que requieren entrada (`input()`, `scanf()`) con historial de comandos (`↑` / `↓`).
-  - **Botón `[Detener]`:** Detención limpia del proceso y subprocesos hijos (`Shift+F5` o `Ctrl+C`).
-  - **Pestaña `💻 Terminal`:** Terminal interactiva PowerShell/CMD en segundo plano.
-  - **Redimensión interactiva:** Barra superior arrastrable para ajustar la altura del dock.
-  - **Aislamiento de clics:** Clics en la terminal no tocan el código del editor.
-- [x] **Detección inteligente de compiladores e intérpretes:**
-  - Auto-detección en Windows/Linux de **GCC**, **Clang (LLVM)** y **MSVC (cl)** para C y C++. Si no tienes GCC pero tienes Clang, AmoxliCode compila automáticamente con Clang sin errores ni configuraciones manuales.
-  - Auto-detección de intérpretes de Python (`python`, `py`, `python3`) y soporte para Rust (`cargo run` con proyecto o `rustc` para archivos sueltos).
-  - Mensajes de error amigables y accionables si no hay un compilador instalado en el sistema.
-- [x] **Zoom personalizable e independiente para la Terminal:**
-  - **`Ctrl + Rueda del ratón`** sobre la terminal para acercar o alejar el texto (60% a 250%).
-  - **Botones dedicados en el dock:** `[-]`, indicador `100%` (clic para resetear) y `[+]`.
-  - **Atajos de teclado:** `Ctrl + +` / `Ctrl + -` / `Ctrl + 0` con la terminal enfocada.
-  - **Persistencia automática:** El nivel de zoom se guarda en `amoxlicode_settings.json` y se restaura entre sesiones.
-- [x] **Pestañas de múltiples documentos:** Múltiples pestañas en la barra superior con títulos, indicador de modificaciones pendientes (`*`), botón de cierre rápido `×` y botón `+` para añadir pestañas.
-- [x] **Apertura y creación de archivos desde la consola (CMD / PowerShell / Terminal):**
-  - Permite invocar `amoxlicode archivo.html` (o múltiples archivos) directamente desde CMD o PowerShell.
-  - **Comportamiento idéntico a Notepad++:** Si el archivo no existe en el disco, muestra el diálogo nativo: *"El archivo 'archivo.html' no existe. ¿Deseas crearlo?"*. Al presionar [Sí], el archivo se genera en el directorio de trabajo y se abre inmediatamente en el editor con su sintaxis asignada automáticamente (HTML, C, Python, etc.).
-  - Soporta banderas de creación directa (`-n`, `--new`, `-c`, `--create`) para crear sin confirmación.
-  - Reemplaza la pestaña virgen inicial para que el archivo especificado sea el único abierto al arrancar.
-- [x] **Resaltado de sintaxis:** Árbol sintáctico con Tree-sitter para C, Java, JavaScript, HTML, CSS, SQL, Python, Rust.
-- [x] **Autocompletado flotante:** Popup IntelliSense estilo LSP sobre el cursor.
-- [x] **Personalización visual:** Fondos de video (.mp4/gif) o degradados animados, sliders de opacidad independientes y modo RGB.
-- [x] **Sonido de tecleo:** Efectos de audio mecánicos/personalizados configurables.
-
----
-
-## 🔄 Metodología para Nuevas Etapas del Proyecto
-
-Para mantener la robustez, limpieza y alto rendimiento del proyecto, cualquier nueva etapa debe seguir este ciclo de 5 pasos:
-
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│ 1. Especificar  │ ──> │ 2. Diseñar      │ ──> │ 3. Implementar  │
-│ Requisitos & UI │     │ Estado & Canales│     │ Módulos Limpios │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-                                                         │
-                                                         ▼
-┌─────────────────┐                             ┌─────────────────┐
-│ 5. Documentar & │ <────────────────────────── │ 4. Verificar    │
-│ Actualizar RM   │                             │ Check, Build & T│
-└─────────────────┘                             └─────────────────┘
+```text
++-----------------------------------------------------------------------------+
+|    ___    __  _______  _  __ __    ________ ____  ____  ______              |
+|   /   |  /  |/  / __ \| |/ // /   /  _/ ____/ __ \/ __ \/ ____/             |
+|  / /| | / /|_/ / / / /|   // /    / // /   / / / / / / / __/                |
+| / ___ |/ /  / / /_/ //   |/ /____/ // /___/ /_/ / /_/ / /___                |
+|/_/  |_/_/  /_/\____//_/|_/_____/___/\____/\____/_____/_____/                |
+|                                                                             |
+|  GPU-ACCELERATED ULTRA-LIGHTWEIGHT TEXT EDITOR & IDE // RUST + WGPU         |
+|  NO ELECTRON. NO WEBVIEW. RAW NATIVE PERFORMANCE (~15-30 MB RAM).           |
++-----------------------------------------------------------------------------+
 ```
 
-1. **Fase 1: Especificación y Contratos de UI:**
-   - Definir qué problema resuelve la nueva característica.
-   - Determinar las coordenadas visuales y si afecta el viewport de texto (`set_terminal_height`, márgenes laterales, etc.).
-   - Diseñar atajos de teclado compatibles con los existentes.
-2. **Fase 2: Modelado de Estado y Concurrencia:**
-   - Mantener las estructuras de datos separadas por módulo.
-   - Si requiere E/S o procesos, usar canales desacoplados (`crossbeam-channel`).
-3. **Fase 3: Implementación Incremental:**
-   - Modificar primero las estructuras de datos y métodos auxiliares.
-   - Integrar la detección de eventos en `src/main.rs`.
-   - Ajustar el layout y render pass en `src/editor.rs` o módulos dedicados.
-4. **Fase 4: Verificación Rigurosa:**
-   - Ejecutar `cargo check` para asegurar cero advertencias de préstamos o tipos.
-   - Ejecutar `cargo build` para verificar generación limpia del binario.
-   - Probar casos de borde (ej. redimensionado de ventana, clics fuera de límites, archivos grandes).
-5. **Fase 5: Actualización del README:**
-   - Marcar la etapa como completada en la hoja de ruta y documentar los nuevos controles.
+## [ 00 // OVERVIEW ]
 
----
+AmoxliCode (del nahuatl *Amoxtli* -- libro o codice del conocimiento -- y *Code*)
+es un entorno de desarrollo integrado (IDE) ultraligero de alto rendimiento
+construido en Rust y acelerado por GPU (WGPU).
 
-## 🗺️ Hoja de Ruta (Roadmap de Nuevas Etapas)
+Combina la velocidad de arranque y el minimo consumo de memoria de Notepad++
+con aceleracion grafica por hardware, shaders interactivos, resaltado AST por
+Tree-Sitter y un panel de ejecucion runner integrado estilo NetBeans / Visual Studio.
 
-### 📌 Etapa 1: Explorador de Archivos Lateral (File Tree Sidebar)
-- [ ] Panel lateral colapsable a la izquierda (`Ctrl+B`).
-- [ ] Vista en árbol de carpetas y archivos del proyecto abierto.
-- [ ] Clic para abrir archivos en el editor.
-- [ ] Iconos según la extensión del archivo.
-- [ ] Menú contextual básico (Crear archivo, renombrar, eliminar).
+```text
+  OS Targets : Windows 10/11 (x64) | Linux (X11/Wayland)
+  Binary Size: ~17 MB Release Standalone
+  RAM Usage  : ~15 MB - 30 MB idle
+  Framerate  : 60 FPS locked (V-Sync / PresentMode::Fifo)
+```
 
-### 📌 Etapa 2: Pestañas de Múltiples Archivos (Multi-Buffer Tabs) [COMPLETADA]
-- [x] Barra superior de pestañas con nombres de archivo.
-- [x] Indicador visual de archivo modificado (`●`).
-- [x] Cierre individual por pestaña (`×`) y creación con `+`.
-- [x] Persistencia y cambio dinámico de lenguaje por archivo.
+-- [ DESCARGAS ] -------------------------------------------------------------
 
-### 📌 Etapa 3: Búsqueda y Reemplazo Global (Find & Replace)
-- [ ] Barra flotante de búsqueda (`Ctrl+F`).
-- [ ] Resaltado de todas las coincidencias en el buffer activo.
-- [ ] Búsqueda y reemplazo en archivo (`Ctrl+H`).
-- [ ] Opciones: Coincidir mayúsculas/minúsculas, palabra completa y expresiones regulares.
+* Instalador Oficial de Windows (v0.1.1):
+  https://github.com/diegomatias0303/amoxtlicode/releases/download/v0.1.1/Instalar_AmoxliCode.exe
 
-### 📌 Etapa 4: Indicadores de Git en el Editor
-- [ ] Detección automática del repositorio Git activo.
-- [ ] Visualización de la rama actual en la barra de estado.
-- [ ] Barras de color en el margen izquierdo (gutter) para líneas añadidas (+), modificadas (~) o eliminadas (-).
+* Ultima Release en GitHub:
+  https://github.com/diegomatias0303/amoxtlicode/releases/tag/v0.1.1
 
-### 📌 Etapa 5: Depuración Visual Básica (DAP / Breakpoints)
-- [ ] Margen clickeable para colocar puntos de interrupción (puntos rojos).
-- [ ] Integración con adaptadores de depuración ligeros (GDB/LLDB/Python).
-- [ ] Panel de inspección de variables locales y pila de llamadas.
+------------------------------------------------------------------------------
 
-### 📌 Etapa 6: Optimización de Empaquetado y Distribución
-- [ ] Perfil `release` ultra-optimizado (`lto = true`, `opt-level = 3`, `strip = true`).
-- [ ] Instalador ligero de Windows o ejecutable portable `.zip` con todos sus recursos incluidos.
+```text
+===============================================================================
+  [ 01 // ARQUITECTURA DEL MOTOR GRAFICO & PIPELINE GPU ]
+===============================================================================
 
----
+  +-----------------------------------------------------------------------+
+  |                     PIPELINE DE RENDERIZADO WGPU                      |
+  +-----------------------------------------------------------------------+
+  |  [CAPA 0] Canvas Dinamico de Fondo                                    |
+  |           Decodificacion de video MP4/GIF via FFmpeg o shaders RGB    |
+  |     |                                                                 |
+  |  [CAPA 1] Quads de Vertices Solidos                                   |
+  |           Paneles, tabs, dock inferior, botones y cursores (WGSL)     |
+  |     |                                                                 |
+  |  [CAPA 2] Atlas de Glifos GPU                                         |
+  |           Renderizado sub-pixel con Cosmic-Text y Glyphon             |
+  +-----------------------------------------------------------------------+
+```
 
-## ⌨️ Atajos de Teclado Principales
+### Reglas de Diseno y Estabilidad del Nucleo:
+* Hilos desacoplados: Ninguna tarea pesada (compilacion, terminal interactiva,
+  decodificacion FFmpeg o I/O) bloquea el hilo principal de la ventana. La
+  comunicacion se gestiona mediante canales `crossbeam-channel` y `std::sync::mpsc`.
+* Aislamiento de UI: Todo panel o dock inferior cuenta con delimitacion estricta
+  en `is_in_text_area()` dentro de `src/editor.rs` para prevenir clics fantasma
+  sobre el buffer de texto.
+* Scissoring de texto: El renderizado de lineas en Cosmic-Text emplea rebanado
+  y limites explicitos (`TextBounds`) para evitar desbordes visuales fuera del viewport.
+* Control de procesos Win32: Toda llamada a compiladores o procesos secundarios
+  utiliza la bandera `CREATE_NO_WINDOW` (0x0800_0000) y finalizacion recursiva de
+  arboles de procesos mediante `taskkill /F /T /PID`.
 
-| Atajo | Acción |
-| :--- | :--- |
-| **`F5`** | Guardar y Ejecutar archivo actual (Salida integrada) |
-| **`Shift + F5`** / **`Ctrl + C`** | Detener proceso en ejecución |
-| **`Ctrl + ~`** / **`Ctrl + ñ`** / **`Ctrl + J`** | Mostrar / Ocultar panel dock inferior |
-| **`Ctrl + S`** | Guardar archivo actual |
-| **`Ctrl + Z`** / **`Ctrl + Y`** | Deshacer / Rehacer |
-| **`Ctrl + F`** | Abrir menú de configuración y temas |
-| **`Ctrl + A`** | Seleccionar todo el texto |
-| **`Ctrl + C`** / **`Ctrl + V`** / **`Ctrl + X`** | Copiar / Pegar / Cortar |
+
+```text
+===============================================================================
+  [ 02 // CARACTERISTICAS PRINCIPALES ]
+===============================================================================
+```
+
+* [x] NUCLEO DE EDICION DE ALTA VELOCIDAD
+  - Edicion multitab con gestion de buffers en memoria.
+  - Seleccion continua con raton y teclado, soporte para portapapeles del sistema
+    (Ctrl+C, Ctrl+V, Ctrl+X) y pila de Deshacer/Rehacer (Ctrl+Z, Ctrl+Y).
+  - Indicador de archivo modificado (*) y cierre rapido por tab.
+
+* [x] RUNNER DE SALIDA & TERMINAL DOCK INTEGRADA
+  - Pestana [Salida]: Guarda y compila/ejecuta el archivo actual con F5 o el
+    boton [Ejecutar]. Muestra comando exacto, directorio, tiempo transcurrido
+    en milisegundos y codigo de retorno.
+  - Pestana [Terminal]: Shell interactiva PowerShell / CMD en segundo plano.
+  - Entrada interactiva (stdin): Permite interactuar con programas en tiempo real
+    (scanf, input) con historial de comandos navegable con Flecha Arriba / Abajo.
+  - Boton [Detener] (Shift+F5 / Ctrl+C) para abortar procesos en ejecucion de forma limpia.
+  - Botones de cabecera alineados pixel-perfect con feedback visual al pasar el raton.
+
+* [x] AUTO-DETECCION DE COMPILADORES E INTERPRETES
+  - Detecta automaticamente GCC, Clang (LLVM) y MSVC (cl) en el sistema.
+  - Si GCC no esta presente, conmuta automaticamente a Clang sin configuraciones manuales.
+  - Auto-deteccion de interpretes de Python (python, py, python3) y toolchain de Rust
+    (cargo run para proyectos, rustc para archivos independientes).
+
+* [x] ZOOM INDEPENDIENTE PARA LA TERMINAL
+  - Ajuste de escala de texto entre 60% y 250% exclusivo para el area de terminal.
+  - Control mediante Ctrl + Rueda del raton, atajos Ctrl + / - / 0 o botones [-], [100%], [+].
+  - Persistencia automatica del factor de escala en `amoxlicode_settings.json`.
+
+* [x] INTEGRACION CLI Y DRAG & DROP
+  - Invocacion directa desde consola: `amoxlicode ruta/archivo.ext`.
+  - Dialogo interactivo nativo estilo Notepad++: si el archivo no existe en disco,
+    solicita confirmacion antes de crearlo y cargarlo con su sintaxis asignada.
+  - Soporte para arrastrar y soltar archivos desde el explorador de Windows.
+
+* [x] RESALTADO SINTACTICO & PERSONALIZACION
+  - Parsing de arbol sintactico AST con Tree-Sitter (C, Java, JS, HTML, CSS, SQL, Python, Rust).
+  - Autocompletado contextual flotante estilo LSP sobre la posicion del cursor.
+  - Fondos animados configurables (video MP4/GIF o gradiente procedimental en shader).
+  - Efectos opcionales de sonido mecanico al teclear.
+
+
+```text
+===============================================================================
+  [ 03 // MAPA DE MODULOS DEL PROYECTO (src/) ]
+===============================================================================
+```
+
+```text
++--------------------+--------------------------------------------------------+
+| Archivo            | Responsabilidad                                        |
++--------------------+--------------------------------------------------------+
+| src/main.rs        | Event loop winit, setup wgpu, despacho de input/atajos |
+| src/editor.rs      | Buffers de texto, tabs, cursor, seleccion, layout dock |
+| src/terminal.rs    | Runner de salida, streaming stdout/stderr, shell stdin |
+| src/syntax.rs      | Arbol sintactico AST y resaltado con Tree-Sitter       |
+| src/settings.rs    | Configuracion persistente JSON, temas y paletas        |
+| src/lsp.rs         | Protocolo LSP y popup flotante de autocompletado       |
+| src/gradient.rs    | Pipeline grafico de gradientes RGB reactivos           |
+| src/video.rs       | Decodificacion de video en hilo secundario (FFmpeg)    |
+| src/ui.rs          | Deteccion de bounding boxes y geometria de interfaz    |
+| src/color.rs       | Utilidades de conversion cromatica RGBA y Hexadecimal |
+| src/audio.rs       | Motor de audio para retroalimentacion mecanica (Rodio) |
++--------------------+--------------------------------------------------------+
+```
+
+
+```text
+===============================================================================
+  [ 04 // ATAJOS DE TECLADO GLOBALES ]
+===============================================================================
+```
+
+```text
+  [ F5 ]              Guardar y Ejecutar archivo activo en Salida
+  [ Shift + F5 ]      Detener ejecucion del proceso en curso
+  [ Ctrl + ~ / J ]    Mostrar u ocultar dock inferior de terminal
+  [ Ctrl + S ]        Guardar buffer actual en disco
+  [ Ctrl + Z ]        Deshacer cambio
+  [ Ctrl + Y ]        Rehacer cambio
+  [ Ctrl + F ]        Abrir panel de configuracion y temas
+  [ Ctrl + A ]        Seleccionar todo el texto del buffer activo
+  [ Ctrl + C ]        Copiar seleccion al portapapeles
+  [ Ctrl + V ]        Pegar contenido desde el portapapeles
+  [ Ctrl + X ]        Cortar seleccion actual
+  [ Ctrl + Wheel ]    Zoom independiente en dock inferior (o Ctrl + / - / 0)
+```
+
+
+```text
+===============================================================================
+  [ 05 // HOJA DE RUTA / ROADMAP DE DESARROLLO ]
+===============================================================================
+```
+
+```text
+  [ ] ETAPA 1: Explorador de Archivos Lateral (Tree View en dock izquierdo)
+  [x] ETAPA 2: Pestanas de Multiples Archivos (Multi-Buffer Tabs)
+  [ ] ETAPA 3: Busqueda y Reemplazo Global (Find & Replace in Buffer / Ctrl+H)
+  [ ] ETAPA 4: Indicadores de Git en el Gutter (Lineas anadidas, modificadas)
+  [ ] ETAPA 5: Depuracion Visual Basica (Breakpoints con DAP / GDB / LLDB)
+  [x] ETAPA 6: Empaquetado y Distribucion (Instalador Inno Setup automatizado)
+```
+
+
+```text
+===============================================================================
+  [ 06 // COMPILACION DESDE CODIGO FUENTE ]
+===============================================================================
+```
+
+Requisitos previos:
+* Rust toolchain (cargo, rustc >= 1.75): https://rustup.rs
+* Windows 10/11 x64 o Linux con drivers Vulkan / DirectX 12 compatibles.
+
+```powershell
+# 1. Clonar el repositorio
+git clone https://github.com/diegomatias0303/amoxtlicode.git
+cd amoxtlicode
+
+# 2. Verificacion rapida de tipos
+cargo check
+
+# 3. Compilar binario de distribucion optimizado (LTO + opt-level 3)
+cargo build --release
+
+# 4. Ejecutar
+.\target\release\amoxlicode.exe
+```
+
+Para generar el instalador de Windows:
+```powershell
+# Abrir installer.iss con Inno Setup Compiler o ejecutar:
+iscc installer.iss
+```
