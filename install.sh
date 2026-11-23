@@ -1,26 +1,25 @@
 #!/usr/bin/env bash
 set -e
 
-# Script de instalación para AmoxliCode en sistemas Linux
+# Script de instalación para AmoxliCode v1.0.0 en sistemas Linux
 
-echo "=== Instalador de AmoxliCode para Linux ==="
+echo "=== Instalador de AmoxliCode v1.0.0 para Linux ==="
 
-# Determinar modo de instalación (sistema vs usuario)
 if [ "$(id -u)" -eq 0 ]; then
     BIN_DIR="/usr/local/bin"
     DESKTOP_DIR="/usr/share/applications"
     SHARE_DIR="/usr/local/share/amoxlicode"
+    ICON_DIR="/usr/share/icons/hicolor/256x256/apps"
     echo "[*] Modo: Instalación para todo el sistema (root)"
 else
     BIN_DIR="$HOME/.local/bin"
     DESKTOP_DIR="$HOME/.local/share/applications"
     SHARE_DIR="$HOME/.local/share/amoxlicode"
+    ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
     echo "[*] Modo: Instalación de usuario actual ($USER)"
 fi
 
-mkdir -p "$BIN_DIR"
-mkdir -p "$DESKTOP_DIR"
-mkdir -p "$SHARE_DIR"
+mkdir -p "$BIN_DIR" "$DESKTOP_DIR" "$SHARE_DIR" "$ICON_DIR"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -38,10 +37,14 @@ fi
 echo "[*] Instalando ejecutable en $BIN_DIR/amoxlicode..."
 install -m 755 "$SRC_BIN" "$BIN_DIR/amoxlicode"
 
-# 2. Copiar recursos si existen
+# 2. Copiar recursos e ícono oficial
 if [ -d "$SCRIPT_DIR/assets" ]; then
     echo "[*] Copiando recursos a $SHARE_DIR/assets..."
-    cp -r "$SCRIPT_DIR/assets" "$SHARE_DIR/"
+    mkdir -p "$SHARE_DIR/assets"
+    cp -r "$SCRIPT_DIR/assets/"* "$SHARE_DIR/assets/"
+    if [ -f "$SCRIPT_DIR/assets/icon.png" ]; then
+        install -m 644 "$SCRIPT_DIR/assets/icon.png" "$ICON_DIR/amoxlicode.png"
+    fi
 fi
 
 # 3. Instalar acceso directo .desktop
@@ -54,6 +57,6 @@ if [ -f "$SCRIPT_DIR/amoxlicode.desktop" ]; then
 fi
 
 echo ""
-echo "=== ¡AmoxliCode instalado con éxito! ==="
+echo "=== ¡AmoxliCode v1.0.0 instalado con éxito! ==="
 echo "Puedes ejecutarlo desde tu terminal escribiendo: amoxlicode"
 echo "O encontrarlo en tu menú de aplicaciones bajo 'AmoxliCode'."

@@ -1,13 +1,14 @@
-//! AmoxliCode - Personalización (Etapa A: datos y persistencia)
+//! AmoxliCode - Personalización (datos y persistencia)
 //!
-//! Guarda las preferencias del usuario (tema de colores, fondo, fuente)
-//! en un archivo JSON junto al ejecutable, para que se recuerden entre
-//! sesiones.
+//! Guarda las preferencias del usuario (tema de colores, fondo, fuente,
+//! opacidades, presets y sonidos) en un archivo JSON persistente.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+
+use crate::color::hex_to_rgb;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Background {
@@ -52,47 +53,71 @@ impl ThemeName {
         }
     }
 
-    /// Paleta base: nombre de highlight (los mismos que usa tree-sitter en
-    /// `syntax.rs`) -> color. El usuario puede sobreescribir cualquiera de
-    /// estas entradas individualmente desde `Settings::custom_colors`.
-    pub fn palette(&self) -> HashMap<&'static str, [u8; 3]> {
-        let entries: &[(&str, [u8; 3])] = match self {
-            ThemeName::OneDark => &[
-                ("keyword", [198, 120, 221]),
-                ("string", [152, 195, 121]),
-                ("comment", [130, 137, 151]),
-                ("number", [209, 154, 102]),
-                ("function", [97, 175, 239]),
-                ("type", [229, 192, 123]),
-                ("operator", [86, 182, 194]),
-            ],
-            ThemeName::Monokai => &[
-                ("keyword", [249, 38, 114]),
-                ("string", [230, 219, 116]),
-                ("comment", [117, 113, 94]),
-                ("number", [174, 129, 255]),
-                ("function", [166, 226, 46]),
-                ("type", [102, 217, 239]),
-                ("operator", [249, 38, 114]),
-            ],
-            ThemeName::Light => &[
-                ("keyword", [166, 38, 164]),
-                ("string", [80, 161, 79]),
-                ("comment", [150, 150, 150]),
-                ("number", [188, 105, 30]),
-                ("function", [64, 120, 242]),
-                ("type", [193, 132, 1]),
-                ("operator", [90, 90, 90]),
-            ],
+    /// Búsqueda zero-allocation de color de sintaxis para todos los scopes de
+    /// tree-sitter y del analizador léxico.
+    pub fn palette_color(&self, name: &str) -> Option<[u8; 3]> {
+        let color = match self {
+            ThemeName::OneDark => match name {
+                "keyword" => [198, 120, 221],
+                "string" | "string.special" => [152, 195, 121],
+                "comment" => [130, 137, 151],
+                "number" | "constant" | "constant.builtin" => [209, 154, 102],
+                "function" | "function.builtin" | "constructor" => [97, 175, 239],
+                "type" | "type.builtin" => [229, 192, 123],
+                "operator" => [86, 182, 194],
+                "tag" => [224, 108, 117],
+                "attribute" | "property" => [209, 154, 102],
+                "variable.builtin" => [229, 192, 123],
+                "variable.parameter" => [224, 108, 117],
+                "punctuation" | "punctuation.bracket" | "punctuation.delimiter" => [171, 178, 191],
+                _ => return None,
+            },
+            ThemeName::Monokai => match name {
+                "keyword" => [249, 38, 114],
+                "string" | "string.special" => [230, 219, 116],
+                "comment" => [117, 113, 94],
+                "number" | "constant" | "constant.builtin" => [174, 129, 255],
+                "function" | "function.builtin" | "constructor" => [166, 226, 46],
+                "type" | "type.builtin" => [102, 217, 239],
+                "operator" => [249, 38, 114],
+                "tag" => [249, 38, 114],
+                "attribute" | "property" => [166, 226, 46],
+                "variable.builtin" => [253, 151, 31],
+                "variable.parameter" => [253, 151, 31],
+                "punctuation" | "punctuation.bracket" | "punctuation.delimiter" => [200, 200, 190],
+                _ => return None,
+            },
+            ThemeName::Light => match name {
+                "keyword" => [166, 38, 164],
+                "string" | "string.special" => [80, 161, 79],
+                "comment" => [140, 145, 155],
+                "number" | "constant" | "constant.builtin" => [188, 105, 30],
+                "function" | "function.builtin" | "constructor" => [64, 120, 242],
+                "type" | "type.builtin" => [193, 132, 1],
+                "operator" => [90, 90, 90],
+                "tag" => [210, 55, 65],
+                "attribute" | "property" => [152, 104, 1],
+                "variable.builtin" => [193, 132, 1],
+                "variable.parameter" => [180, 75, 50],
+                "punctuation" | "punctuation.bracket" | "punctuation.delimiter" => [100, 105, 115],
+                _ => return None,
+            },
         };
-        entries.iter().cloned().collect()
+        Some(color)
+    }
+
+    #[allow(dead_code)]
+    pub fn palette(&self) -> HashMap<&'static str, [u8; 3]> {
+        let keys = [
+            "keyword", "string", "comment", "number", "function", "type", "operator",
+        ];
+        keys.iter()
+            .filter_map(|&k| self.palette_color(k).map(|c| (k, c)))
+            .collect()
     }
 }
 
-use crate::color::hex_to_rgb;
-
-/// Una combinación de colores personalizados guardada con un nombre, para
-/// poder cargarla después.
+/// Una combinación de colores personalizados guardada con un nombre.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ColorPreset {
     pub name: String,
@@ -141,28 +166,20 @@ impl RgbElement {
 pub struct Settings {
     pub background: Background,
     pub theme: ThemeName,
-    /// Sobreescrituras individuales de color: nombre de highlight (ej.
-    /// "keyword") -> color en hexadecimal (ej. "#FF0080"). Tiene
-    /// prioridad sobre la paleta del tema.
     pub custom_colors: HashMap<String, String>,
     pub font_family: String,
-    /// Modo arcoíris animado Gamer / Chroma maestro (F8).
     #[serde(default)]
     pub rgb_gamer_mode: bool,
-    /// Opacidad del fondo del área de código sobre video/imagen (0.0 a 1.0).
     #[serde(default = "default_editor_opacity")]
     pub editor_opacity: f32,
-    /// Opacidad de la línea de marcador tipo Dev-C++ (0.0 a 1.0).
     #[serde(default = "default_marker_opacity")]
     pub marker_opacity: f32,
-    /// Opacidad de los menús desplegables (0.0 a 1.0).
     #[serde(default = "default_menu_opacity")]
     pub menu_opacity: f32,
     #[serde(default = "default_topbar_opacity")]
     pub topbar_opacity: f32,
     #[serde(default = "default_terminal_opacity")]
     pub terminal_opacity: f32,
-    /// Opacidad de la barra de desplazamiento izquierda (0.0 a 1.0).
     #[serde(default = "default_scrollbar_opacity")]
     pub scrollbar_opacity: f32,
 
@@ -184,16 +201,17 @@ pub struct Settings {
     #[serde(default)]
     pub rgb_terminal: bool,
 
-    /// Nivel de zoom de la terminal integrada (1.0 = 100%).
     #[serde(default = "default_terminal_font_scale")]
     pub terminal_font_scale: f32,
 
-    /// Presets de colores guardados por el usuario, con nombre.
+    #[serde(default = "default_true")]
+    pub auto_close_pairs: bool,
+
+    #[serde(default)]
+    pub recent_files: Vec<PathBuf>,
+
     #[serde(default)]
     pub presets: Vec<ColorPreset>,
-    /// Sonido asignado a cada acción (clave -> ruta del archivo). Claves
-    /// usadas: "keypress", "paste", "cut", "copy", "undo", "redo",
-    /// "select_all".
     #[serde(default)]
     pub sounds: HashMap<String, PathBuf>,
 }
@@ -245,6 +263,8 @@ impl Default for Settings {
             terminal_opacity: 0.90,
             scrollbar_opacity: 0.75,
             terminal_font_scale: 1.0,
+            auto_close_pairs: true,
+            recent_files: Vec::new(),
             rgb_topbar: true,
             rgb_syntax: true,
             rgb_cursor: true,
@@ -260,36 +280,103 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// Resuelve la ruta estable del archivo de configuración:
+    /// 1. Si ya existe `amoxlicode_settings.json` en el directorio actual (modo dev/portable), úsalo.
+    /// 2. Si existe junto al ejecutable, úsalo.
+    /// 3. Si no, usa el directorio de configuración del usuario (`%APPDATA%\AmoxliCode\` en Windows
+    ///    o `~/.config/amoxlicode/` en Linux) para no crear JSONs dispersos al abrir archivos desde el explorador.
     fn file_path() -> PathBuf {
-        PathBuf::from("amoxlicode_settings.json")
+        let local = PathBuf::from("amoxlicode_settings.json");
+        if local.exists() {
+            return local;
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let beside_exe = dir.join("amoxlicode_settings.json");
+                if beside_exe.exists() {
+                    return beside_exe;
+                }
+            }
+        }
+        #[cfg(target_os = "windows")]
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            let dir = PathBuf::from(appdata).join("AmoxliCode");
+            return dir.join("amoxlicode_settings.json");
+        }
+        #[cfg(not(target_os = "windows"))]
+        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+            return PathBuf::from(xdg).join("amoxlicode").join("amoxlicode_settings.json");
+        } else if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(".config").join("amoxlicode").join("amoxlicode_settings.json");
+        }
+        local
+    }
+
+    pub fn exists_on_disk() -> bool {
+        Self::file_path().exists()
+    }
+
+    fn sanitize(&mut self) {
+        self.editor_opacity = self.editor_opacity.clamp(0.0, 1.0);
+        self.marker_opacity = self.marker_opacity.clamp(0.0, 1.0);
+        self.menu_opacity = self.menu_opacity.clamp(0.0, 1.0);
+        self.topbar_opacity = self.topbar_opacity.clamp(0.0, 1.0);
+        self.terminal_opacity = self.terminal_opacity.clamp(0.0, 1.0);
+        self.scrollbar_opacity = self.scrollbar_opacity.clamp(0.0, 1.0);
+        self.terminal_font_scale = self.terminal_font_scale.clamp(0.6, 2.5);
+        self.recent_files.truncate(8);
+    }
+
+    pub fn push_recent_file(&mut self, path: PathBuf) {
+        self.recent_files.retain(|p| p != &path);
+        self.recent_files.insert(0, path);
+        self.recent_files.truncate(8);
+    }
+
+    pub fn toggle_auto_close_pairs(&mut self) {
+        self.auto_close_pairs = !self.auto_close_pairs;
     }
 
     pub fn load() -> Self {
-        std::fs::read_to_string(Self::file_path())
+        let mut settings: Self = std::fs::read_to_string(Self::file_path())
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        settings.sanitize();
+        settings
     }
 
     pub fn save(&self) {
+        let path = Self::file_path();
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
         match serde_json::to_string_pretty(self) {
             Ok(json) => {
-                if let Err(e) = std::fs::write(Self::file_path(), json) {
-                    log::error!("no se pudo guardar la configuración: {e:?}");
+                if let Err(e) = std::fs::write(&path, json) {
+                    log::error!("no se pudo guardar la configuración en {path:?}: {e:?}");
                 }
             }
             Err(e) => log::error!("no se pudo serializar la configuración: {e:?}"),
         }
     }
 
-    /// Color final para un highlight dado: la sobreescritura del usuario
-    /// si existe, si no el color del tema actual, si no el color de texto
-    /// normal del tema.
+    /// Color final para un highlight dado (zero-allocation en la ruta rápida).
     pub fn color_for(&self, highlight: Option<&str>) -> [u8; 3] {
         if let Some(name) = highlight {
             if let Some(hex) = self.custom_colors.get(name) {
                 if let Some(rgb) = hex_to_rgb(hex) {
                     return rgb;
+                }
+            }
+            // También respetamos sobreescrituras de scope padre (ej. "function" aplica a "function.builtin")
+            if let Some((parent, _)) = name.split_once('.') {
+                if let Some(hex) = self.custom_colors.get(parent) {
+                    if let Some(rgb) = hex_to_rgb(hex) {
+                        return rgb;
+                    }
                 }
             }
             match name {
@@ -319,7 +406,7 @@ impl Settings {
                 "line_numbers" => return match self.theme {
                     ThemeName::OneDark => [110, 114, 128],
                     ThemeName::Monokai => [117, 113, 94],
-                    ThemeName::Light => [160, 160, 160],
+                    ThemeName::Light => [140, 145, 155],
                 },
                 "tab_active" => return match self.theme {
                     ThemeName::OneDark => [36, 40, 54],
@@ -342,8 +429,8 @@ impl Settings {
                 },
                 _ => {}
             }
-            if let Some(theme_color) = self.theme.palette().get(name) {
-                return *theme_color;
+            if let Some(theme_color) = self.theme.palette_color(name) {
+                return theme_color;
             }
         }
         self.theme.default_text_color()
@@ -498,7 +585,6 @@ impl Settings {
         }
     }
 
-    /// Guarda un color nuevo (en hexadecimal) para un tipo de token.
     pub fn set_custom_color(&mut self, highlight: &str, color: [u8; 3]) {
         self.custom_colors
             .insert(highlight.to_string(), crate::color::rgb_to_hex(color));
@@ -508,8 +594,6 @@ impl Settings {
         self.custom_colors.clear();
     }
 
-    /// Guarda la combinación de colores actual como un preset nuevo con
-    /// el nombre dado.
     pub fn save_preset(&mut self, name: String) {
         self.presets.push(ColorPreset {
             name,
@@ -517,8 +601,6 @@ impl Settings {
         });
     }
 
-    /// Reemplaza los colores personalizados actuales por los de un
-    /// preset guardado.
     pub fn apply_preset(&mut self, index: usize) {
         if let Some(preset) = self.presets.get(index) {
             self.custom_colors = preset.colors.clone();

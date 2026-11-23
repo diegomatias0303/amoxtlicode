@@ -1,30 +1,37 @@
 //! AmoxliCode - motor de sonido para los atajos de teclado.
 //!
-//! Guarda en memoria los bytes de cada sonido asignado (cargados una sola
-//! vez, no en cada tecla) y los reproduce bajo demanda. Si no hay
-//! dispositivo de audio disponible, todo el motor simplemente no existe
-//! (`AudioEngine::new()` devuelve `None`) y el programa sigue funcionando
-//! normal, solo sin sonidos.
+//! Guarda en memoria los bytes de cada sonido asignado en un `Arc<Vec<u8>>`
+//! (cargados una sola vez y compartidos sin clonar al reproducir). Si no hay
+//! dispositivo de audio disponible, `AudioEngine::new()` devuelve `None` y la
+//! aplicación continúa funcionando con normalidad.
 
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::Path;
+use std::sync::Arc;
 
 use rodio::{OutputStream, OutputStreamHandle, Source};
 
+/// Envoltorio zero-copy para pasar un `Arc<Vec<u8>>` a `std::io::Cursor` sin
+/// clonar el buffer de audio en cada pulsación de tecla.
+#[derive(Clone)]
+struct SharedBytes(Arc<Vec<u8>>);
+
+impl AsRef<[u8]> for SharedBytes {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+
 pub struct AudioEngine {
-    // Debe mantenerse viva mientras el programa corra, o se corta el
-    // audio (aunque no la usemos directamente después de crearla).
+    // Debe mantenerse viva mientras el programa corra, o se corta el audio.
     _stream: OutputStream,
     handle: OutputStreamHandle,
-    cache: HashMap<String, Vec<u8>>,
+    cache: HashMap<String, Arc<Vec<u8>>>,
 }
 
 impl AudioEngine {
-    /// Intenta abrir el dispositivo de audio por defecto. Si no hay
-    /// ninguno disponible (o falla por cualquier razón), devuelve `None`
-    /// en vez de tronar la app entera por algo tan no-esencial como el
-    /// sonido.
+    /// Intenta abrir el dispositivo de audio por defecto.
     pub fn new() -> Option<Self> {
         let (stream, handle) = OutputStream::try_default().ok()?;
         Some(Self {
@@ -34,11 +41,10 @@ impl AudioEngine {
         })
     }
 
-    /// Carga (o reemplaza) el sonido asignado a una acción. Se lee del
-    /// disco una sola vez aquí, no cada vez que se reproduce.
+    /// Carga (o reemplaza) el sonido asignado a una acción desde disco una sola vez.
     pub fn load(&mut self, action: &str, path: &Path) -> anyhow::Result<()> {
         let bytes = std::fs::read(path)?;
-        self.cache.insert(action.to_string(), bytes);
+        self.cache.insert(action.to_string(), Arc::new(bytes));
         Ok(())
     }
 
@@ -51,15 +57,13 @@ impl AudioEngine {
         self.cache.clear();
     }
 
-    /// Reproduce el sonido de una acción, si tiene uno asignado. No
-    /// bloquea: el audio se reproduce en un hilo interno de `rodio`.
+    /// Reproduce el sonido de una acción sin clonar el buffer de bytes ni
+    /// bloquear el hilo principal.
     pub fn play(&self, action: &str) {
         let Some(bytes) = self.cache.get(action) else {
             return;
         };
-        // Clonamos los bytes porque el decodificador necesita algo que
-        // implemente Read + Seek "dueño" de los datos.
-        let cursor = Cursor::new(bytes.clone());
+        let cursor = Cursor::new(SharedBytes(Arc::clone(bytes)));
         if let Ok(source) = rodio::Decoder::new(cursor) {
             let _ = self.handle.play_raw(source.convert_samples());
         }

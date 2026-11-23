@@ -1,8 +1,8 @@
 [package]
 name = "amoxlicode"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
-description = "AmoxliCode - IDE ultraligero con renderizado GPU (Fase 1: Shell)"
+description = "AmoxliCode - Editor de código e IDE ultraligero acelerado por GPU (Rust + WGPU)"
 
 [dependencies]
 winit = "0.29"

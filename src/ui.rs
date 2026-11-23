@@ -1,12 +1,8 @@
 //! AmoxliCode - pipeline de rectángulos sólidos.
 //!
-//! Dibuja todos los elementos de UI planos (barra de herramientas,
-//! pestañas, fondo del panel, selección de texto, cursor, etc.) en un
-//! solo lote: se suben TODOS los rectángulos del cuadro a la vez a un
-//! solo buffer y se dibujan con una sola llamada. Antes se hacía un
-//! `set_rect` + `draw` por cada rectángulo, reutilizando el mismo buffer
-//! — eso causaba parpadeos, porque la GPU podía alcanzar a sobreescribir
-//! un rectángulo antes de que el anterior terminara de dibujarse.
+//! Dibuja todos los elementos de UI planos en un solo lote reutilizando un
+//! buffer de vértices pre-asignado (cero realocaciones por frame en régimen
+//! estable) y protegiendo contra dimensiones 0x0 al minimizar la ventana.
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::{Device, Queue, TextureFormat};
@@ -33,8 +29,9 @@ pub struct Rect {
 pub struct SolidQuadPipeline {
     pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
-    capacity: usize, // cuántos rectángulos caben en el buffer actual
-    count: usize,    // cuántos hay subidos ahora mismo
+    capacity: usize,
+    count: usize,
+    scratch_verts: Vec<Vertex>,
 }
 
 impl SolidQuadPipeline {
@@ -96,6 +93,7 @@ impl SolidQuadPipeline {
             vertex_buffer,
             capacity,
             count: 0,
+            scratch_verts: Vec::with_capacity(capacity * 6),
         }
     }
 
@@ -108,37 +106,44 @@ impl SolidQuadPipeline {
         })
     }
 
-    /// Sube TODOS los rectángulos de este cuadro a la vez. Debe llamarse
-    /// una sola vez por frame (agrupando todo lo que haya que dibujar),
-    /// seguido de UN solo `draw()`.
-    pub fn upload(&mut self, device: &Device, queue: &Queue, window_width: u32, window_height: u32, rects: &[Rect]) {
-        self.count = rects.len();
-        if rects.is_empty() {
+    /// Sube TODOS los rectángulos de este cuadro a la vez.
+    pub fn upload(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        window_width: u32,
+        window_height: u32,
+        rects: &[Rect],
+    ) {
+        if rects.is_empty() || window_width == 0 || window_height == 0 {
+            self.count = 0;
             return;
         }
+        self.count = rects.len();
         if rects.len() > self.capacity {
             self.capacity = rects.len().next_power_of_two().max(64);
             self.vertex_buffer = Self::make_buffer(device, self.capacity);
         }
 
-        let to_ndc_x = |px: f32| (px / window_width as f32) * 2.0 - 1.0;
-        let to_ndc_y = |py: f32| 1.0 - (py / window_height as f32) * 2.0;
+        let inv_w = 2.0 / window_width as f32;
+        let inv_h = 2.0 / window_height as f32;
 
-        let mut verts = Vec::with_capacity(rects.len() * 6);
+        self.scratch_verts.clear();
+        self.scratch_verts.reserve(rects.len() * 6);
         for r in rects {
-            let x0 = to_ndc_x(r.x);
-            let x1 = to_ndc_x(r.x + r.w);
-            let y0 = to_ndc_y(r.y);
-            let y1 = to_ndc_y(r.y + r.h);
+            let x0 = r.x * inv_w - 1.0;
+            let x1 = (r.x + r.w) * inv_w - 1.0;
+            let y0 = 1.0 - r.y * inv_h;
+            let y1 = 1.0 - (r.y + r.h) * inv_h;
             let c = [r.color[0], r.color[1], r.color[2], r.alpha];
-            verts.push(Vertex { position: [x0, y0], color: c });
-            verts.push(Vertex { position: [x1, y0], color: c });
-            verts.push(Vertex { position: [x0, y1], color: c });
-            verts.push(Vertex { position: [x1, y0], color: c });
-            verts.push(Vertex { position: [x1, y1], color: c });
-            verts.push(Vertex { position: [x0, y1], color: c });
+            self.scratch_verts.push(Vertex { position: [x0, y0], color: c });
+            self.scratch_verts.push(Vertex { position: [x1, y0], color: c });
+            self.scratch_verts.push(Vertex { position: [x0, y1], color: c });
+            self.scratch_verts.push(Vertex { position: [x1, y0], color: c });
+            self.scratch_verts.push(Vertex { position: [x1, y1], color: c });
+            self.scratch_verts.push(Vertex { position: [x0, y1], color: c });
         }
-        queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&verts));
+        queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.scratch_verts));
     }
 
     pub fn draw<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {

@@ -54,9 +54,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Intentar subir a v0.1.1 o a la tag del evento
-          TAG="${GITHUB_REF_NAME:-v0.1.1}"
+          TAG="${GITHUB_REF_NAME:-v1.0.0}"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            TAG="v0.1.1"
+            gh release create "$TAG" --title "AmoxliCode $TAG" --generate-notes
           fi
-          gh release upload "$TAG" AmoxliCode_Linux_x86_64.tar.gz --clobber
+          ARCHIVE="$(ls AmoxliCode_*Linux_x86_64.tar.gz AmoxliCode_Linux_x86_64.tar.gz 2>/dev/null | head -n 1)"
+          gh release upload "$TAG" "$ARCHIVE" --clobber

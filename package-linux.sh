@@ -8,8 +8,8 @@ echo "=== Empaquetando AmoxliCode para Linux ==="
 echo "[*] Compilando en modo Release..."
 cargo build --release
 
-RELEASE_DIR="AmoxliCode_Linux_Portable"
-ARCHIVE_NAME="AmoxliCode_Linux_x86_64.tar.gz"
+RELEASE_DIR="AmoxliCode_v1.0.0_Linux_Portable"
+ARCHIVE_NAME="AmoxliCode_v1.0.0_Linux_x86_64.tar.gz"
 
 echo "[*] Preparando carpeta de empaquetado ($RELEASE_DIR)..."
 rm -rf "$RELEASE_DIR"

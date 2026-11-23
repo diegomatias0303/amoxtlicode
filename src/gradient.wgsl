@@ -30,7 +30,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 }
 
 fn hsv2rgb(h: f32, s: f32, v: f32) -> vec3<f32> {
-    let hh = h % 360.0;
+    let hh = ((h % 360.0) + 360.0) % 360.0;
     let c = v * s;
     let x = c * (1.0 - abs(((hh / 60.0) % 2.0) - 1.0));
     let m = v - c;

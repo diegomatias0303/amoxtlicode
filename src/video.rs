@@ -1,12 +1,13 @@
 //! AmoxliCode - Fase 2: Motor de video (Capa 0 / fondo)
 //!
-//! Decodifica un archivo de video en un hilo aparte y envía frames RGBA
-//! listos para subir a una textura de wgpu, sin bloquear el hilo principal
-//! de renderizado.
+//! Decodifica un archivo de video o imagen en un hilo aparte y envía frames
+//! RGBA listos para subir a una textura de wgpu, respetando el framerate real
+//! del video (sin acelerar videos de 24/30 FPS en monitores de 60/144 Hz).
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use crossbeam_channel::{bounded, Receiver, Sender};
 
 /// Un frame de video ya convertido a RGBA8 "empaquetado" (sin padding de
@@ -15,10 +16,8 @@ pub struct VideoFrame {
     pub data: Vec<u8>,
 }
 
-/// Abre el archivo indicado (video O imagen estática) y devuelve el
-/// receptor del canal junto con el ancho/alto (necesarios para crear la
-/// textura de wgpu con el tamaño correcto). Detecta cuál es según la
-/// extensión del archivo.
+/// Abre el archivo indicado (video O imagen estática) y devuelve el receptor
+/// del canal junto con el ancho/alto.
 pub fn spawn(path: impl AsRef<Path>) -> Result<(Receiver<VideoFrame>, u32, u32)> {
     let path = path.as_ref();
     let ext = path
@@ -33,21 +32,20 @@ pub fn spawn(path: impl AsRef<Path>) -> Result<(Receiver<VideoFrame>, u32, u32)>
     }
 }
 
-/// Carga una imagen estática una sola vez (no hace falta un hilo de
-/// decodificación continua: el "video" de fondo, en este caso, es
-/// literalmente un solo frame fijo).
+/// Carga una imagen estática una sola vez.
 fn spawn_image(path: &Path) -> Result<(Receiver<VideoFrame>, u32, u32)> {
     let img = image::open(path)
         .context("no se pudo abrir la imagen")?
         .into_rgba8();
     let (width, height) = img.dimensions();
+    if width == 0 || height == 0 {
+        bail!("la imagen tiene dimensiones inválidas ({width}x{height})");
+    }
 
     let (tx, rx) = bounded::<VideoFrame>(1);
     let _ = tx.send(VideoFrame {
         data: img.into_raw(),
     });
-    // No hace falta guardar `tx` en un hilo: el único frame ya quedó
-    // encolado en el canal, y `rx` lo puede leer en cualquier momento.
 
     Ok((rx, width, height))
 }
@@ -56,16 +54,11 @@ fn spawn_video(path: impl AsRef<Path>) -> Result<(Receiver<VideoFrame>, u32, u32
     ffmpeg_next::init().context("no se pudo inicializar ffmpeg")?;
 
     let path: PathBuf = path.as_ref().to_path_buf();
-
-    // Abrimos una vez, solo para leer las dimensiones del video antes de
-    // lanzar el hilo (así el llamador puede crear la textura del tamaño
-    // correcto de inmediato).
     let (width, height) = probe_dimensions(&path)?;
+    if width == 0 || height == 0 {
+        bail!("el video tiene dimensiones inválidas ({width}x{height})");
+    }
 
-    // Canal con capacidad pequeña: si el hilo principal se atrasa, el
-    // decodificador se bloquea al enviar en vez de acumular frames en
-    // memoria indefinidamente (esto evita el problema de "backpressure"
-    // sin límite).
     let (tx, rx) = bounded::<VideoFrame>(2);
 
     let decode_path = path.clone();
@@ -96,10 +89,71 @@ fn probe_dimensions(path: &Path) -> Result<(u32, u32)> {
     Ok((decoder.width(), decoder.height()))
 }
 
-/// Ciclo principal del hilo de decodificación. Cuando el video termina, lo
-/// vuelve a abrir desde el inicio (loop infinito), tal como se espera de
-/// un fondo animado continuo.
+fn stream_frame_duration(stream: &ffmpeg_next::Stream) -> Duration {
+    let rate = stream.avg_frame_rate();
+    let fps = if rate.denominator() > 0 && rate.numerator() > 0 {
+        rate.numerator() as f64 / rate.denominator() as f64
+    } else {
+        let r = stream.rate();
+        if r.denominator() > 0 && r.numerator() > 0 {
+            r.numerator() as f64 / r.denominator() as f64
+        } else {
+            30.0
+        }
+    };
+    let clamped = fps.clamp(5.0, 120.0);
+    Duration::from_secs_f64(1.0 / clamped)
+}
+
+fn emit_decoded_frames(
+    decoder: &mut ffmpeg_next::decoder::Video,
+    scaler: &mut ffmpeg_next::software::scaling::Context,
+    tx: &Sender<VideoFrame>,
+    frame_duration: Duration,
+    next_deadline: &mut Instant,
+) -> Result<bool> {
+    let mut decoded = ffmpeg_next::util::frame::video::Video::empty();
+    while decoder.receive_frame(&mut decoded).is_ok() {
+        let mut rgba_frame = ffmpeg_next::util::frame::video::Video::empty();
+        if let Err(e) = scaler.run(&decoded, &mut rgba_frame) {
+            log::warn!("frame omitido al convertir a RGBA: {e:?}");
+            continue;
+        }
+
+        let width = rgba_frame.width() as usize;
+        let height = rgba_frame.height() as usize;
+        let stride = rgba_frame.stride(0);
+        let src = rgba_frame.data(0);
+        let row_bytes = width * 4;
+        if stride < row_bytes || src.len() < height.saturating_sub(1) * stride + row_bytes {
+            continue;
+        }
+
+        let mut packed = Vec::with_capacity(row_bytes * height);
+        for row in 0..height {
+            let start = row * stride;
+            let end = start + row_bytes;
+            packed.extend_from_slice(&src[start..end]);
+        }
+
+        // Ritmo real del video: evita reproducir a 2x-5x en pantallas de 60/144Hz.
+        let now = Instant::now();
+        if *next_deadline > now {
+            std::thread::sleep(*next_deadline - now);
+        }
+        *next_deadline = Instant::now() + frame_duration;
+
+        if tx.send(VideoFrame { data: packed }).is_err() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Ciclo principal del hilo de decodificación con loop infinito y drenado EOF.
 fn decode_loop(path: &Path, tx: Sender<VideoFrame>) -> Result<()> {
+    let mut next_deadline = Instant::now();
+
     loop {
         let mut ictx = ffmpeg_next::format::input(path).context("no se pudo reabrir el video")?;
         let input = ictx
@@ -107,6 +161,7 @@ fn decode_loop(path: &Path, tx: Sender<VideoFrame>) -> Result<()> {
             .best(ffmpeg_next::media::Type::Video)
             .context("sin pista de video")?;
         let video_stream_index = input.index();
+        let frame_duration = stream_frame_duration(&input);
 
         let context_decoder =
             ffmpeg_next::codec::context::Context::from_parameters(input.parameters())?;
@@ -128,38 +183,22 @@ fn decode_loop(path: &Path, tx: Sender<VideoFrame>) -> Result<()> {
                 continue;
             }
 
-            decoder.send_packet(&packet)?;
+            // Si un paquete está dañado, lo registramos y seguimos en vez de matar el hilo.
+            if let Err(e) = decoder.send_packet(&packet) {
+                log::warn!("paquete de video omitido: {e:?}");
+                continue;
+            }
 
-            let mut decoded = ffmpeg_next::util::frame::video::Video::empty();
-            while decoder.receive_frame(&mut decoded).is_ok() {
-                let mut rgba_frame = ffmpeg_next::util::frame::video::Video::empty();
-                scaler
-                    .run(&decoded, &mut rgba_frame)
-                    .context("fallo al convertir el frame a RGBA")?;
-
-                let width = rgba_frame.width() as usize;
-                let height = rgba_frame.height() as usize;
-                let stride = rgba_frame.stride(0);
-                let src = rgba_frame.data(0);
-
-                // FFmpeg puede alinear cada fila con relleno extra
-                // (stride > width * 4 bytes). Copiamos fila por fila para
-                // obtener un buffer "empaquetado" sin ese relleno, que es
-                // lo que `write_texture` espera.
-                let mut packed = Vec::with_capacity(width * height * 4);
-                for row in 0..height {
-                    let start = row * stride;
-                    let end = start + width * 4;
-                    packed.extend_from_slice(&src[start..end]);
-                }
-
-                if tx.send(VideoFrame { data: packed }).is_err() {
-                    // El receptor se cerró (la ventana se cerró): terminamos
-                    // el hilo con normalidad.
-                    return Ok(());
-                }
+            if !emit_decoded_frames(&mut decoder, &mut scaler, &tx, frame_duration, &mut next_deadline)? {
+                return Ok(());
             }
         }
-        // Fin del archivo: el `loop` externo lo vuelve a abrir desde cero.
+
+        // Drenar los últimos B-frames acumulados antes de reiniciar el loop.
+        if decoder.send_eof().is_ok()
+            && !emit_decoded_frames(&mut decoder, &mut scaler, &tx, frame_duration, &mut next_deadline)?
+        {
+            return Ok(());
+        }
     }
 }

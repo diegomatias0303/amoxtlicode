@@ -107,11 +107,14 @@ Tree-Sitter y un panel de ejecucion runner integrado estilo NetBeans / Visual St
 
 -- [ DESCARGAS ] -------------------------------------------------------------
 
-* Instalador Oficial de Windows (v0.1.1):
-  https://github.com/diegomatias0303/amoxtlicode/releases/download/v0.1.1/Instalar_AmoxliCode.exe
+* Instalador Oficial de Windows (v1.0.0):
+  https://github.com/diegomatias0303/amoxtlicode/releases/download/v1.0.0/Instalar_AmoxliCode_v1.0.0.exe
+
+* Paquete Portable Windows x64 (incluye DLLs FFmpeg):
+  https://github.com/diegomatias0303/amoxtlicode/releases/download/v1.0.0/AmoxliCode_v1.0.0_Windows_x64.zip
 
 * Ultima Release en GitHub:
-  https://github.com/diegomatias0303/amoxtlicode/releases/tag/v0.1.1
+  https://github.com/diegomatias0303/amoxtlicode/releases/tag/v1.0.0
 
 ------------------------------------------------------------------------------
 
@@ -226,18 +229,27 @@ Tree-Sitter y un panel de ejecucion runner integrado estilo NetBeans / Visual St
 ```
 
 ```text
-  [ F5 ]              Guardar y Ejecutar archivo activo en Salida
-  [ Shift + F5 ]      Detener ejecucion del proceso en curso
-  [ Ctrl + ~ / J ]    Mostrar u ocultar dock inferior de terminal
-  [ Ctrl + S ]        Guardar buffer actual en disco
-  [ Ctrl + Z ]        Deshacer cambio
-  [ Ctrl + Y ]        Rehacer cambio
-  [ Ctrl + F ]        Abrir panel de configuracion y temas
-  [ Ctrl + A ]        Seleccionar todo el texto del buffer activo
-  [ Ctrl + C ]        Copiar seleccion al portapapeles
-  [ Ctrl + V ]        Pegar contenido desde el portapapeles
-  [ Ctrl + X ]        Cortar seleccion actual
-  [ Ctrl + Wheel ]    Zoom independiente en dock inferior (o Ctrl + / - / 0)
+  [ F5 ]                 Guardar y Ejecutar archivo activo en Salida
+  [ Shift + F5 ]         Detener ejecucion del proceso en curso
+  [ F2 ]                 Alternar marcador de linea estilo Dev-C++
+  [ F3 ]                 Buscar siguiente coincidencia
+  [ F8 ]                 Activar/desactivar Modo RGB Gamer
+  [ Ctrl + ~ / J ]       Mostrar u ocultar dock inferior de terminal
+  [ Ctrl + N / O / W ]   Nueva pestana / Abrir archivo / Cerrar pestana (o clic central)
+  [ Ctrl + S ]           Guardar archivo actual (Ctrl + Shift + S: Guardar como)
+  [ Ctrl + Z / Y ]       Deshacer / Rehacer (tambien Ctrl + Shift + Z)
+  [ Ctrl + F / H ]       Buscar / Buscar y Reemplazar (Tab cambia campo)
+  [ Ctrl + G ]           Ir a linea
+  [ Ctrl + D ]           Duplicar linea o bloque seleccionado
+  [ Ctrl + / ]           Comentar o descomentar linea/seleccion
+  [ Alt + ↑ / ↓ ]        Mover linea arriba o abajo
+  [ Ctrl + ← / → ]       Desplazamiento rapido palabra por palabra
+  [ Ctrl + Backspace ]   Borrar palabra completa a la izquierda (Ctrl + Supr: derecha)
+  [ Shift + Flechas ]    Seleccionar caracter por caracter (Ctrl + Shift: por palabras)
+  [ Ctrl + , ]           Abrir panel de personalizacion, temas y autocierre de pares
+  [ Ctrl + A / C / V / X ] Seleccionar todo / Copiar / Pegar / Cortar
+  [ Shift + Wheel ]      Desplazamiento horizontal en lineas largas
+  [ Ctrl + Wheel ]       Zoom del editor o de la terminal (Ctrl + / - / 0)
 ```
 
 
@@ -248,12 +260,12 @@ Tree-Sitter y un panel de ejecucion runner integrado estilo NetBeans / Visual St
 ```
 
 ```text
-  [ ] ETAPA 1: Explorador de Archivos Lateral (Tree View en dock izquierdo)
-  [x] ETAPA 2: Pestanas de Multiples Archivos (Multi-Buffer Tabs)
-  [ ] ETAPA 3: Busqueda y Reemplazo Global (Find & Replace in Buffer / Ctrl+H)
-  [ ] ETAPA 4: Indicadores de Git en el Gutter (Lineas anadidas, modificadas)
-  [ ] ETAPA 5: Depuracion Visual Basica (Breakpoints con DAP / GDB / LLDB)
-  [x] ETAPA 6: Empaquetado y Distribucion (Instalador Inno Setup automatizado)
+  [x] ETAPA 1: Alineacion 1:1 de numeros de linea, scroll horizontal y autocierre de pares
+  [x] ETAPA 2: Pestanas adaptables multi-archivo + clic central + archivos recientes
+  [x] ETAPA 3: Busqueda y Reemplazo Global (Find & Replace in Buffer / Ctrl+H)
+  [x] ETAPA 4: Empaquetado v1.0.0 completo (icono oficial + DLLs FFmpeg + instalador)
+  [ ] ETAPA 5 (v1.1): Explorador de Archivos Lateral (Tree View) e indicadores Git
+  [ ] ETAPA 6 (v1.2): Depuracion Visual Basica (Breakpoints con DAP / GDB / LLDB)
 ```
 
 

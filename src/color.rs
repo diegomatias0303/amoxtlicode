@@ -60,8 +60,8 @@ pub fn rgb_to_hex(rgb: [u8; 3]) -> String {
 }
 
 pub fn hex_to_rgb(hex: &str) -> Option<[u8; 3]> {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() != 6 {
+    let hex = hex.trim().trim_start_matches('#');
+    if hex.len() != 6 || !hex.is_ascii() {
         return None;
     }
     let r = u8::from_str_radix(&hex[0..2], 16).ok()?;

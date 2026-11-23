@@ -135,8 +135,7 @@ pub struct GradientQuad {
 }
 
 impl GradientQuad {
-    /// Actualiza posición, tamaño (en píxeles) y parámetros del degradado
-    /// (tono actual + modo: cuadro SV o barra de tono).
+    /// Actualiza posición, tamaño (en píxeles) y parámetros del degradado.
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &self,
@@ -150,8 +149,10 @@ impl GradientQuad {
         hue: f32,
         is_hue_bar: bool,
     ) {
-        let to_ndc_x = |px: f32| (px / window_width as f32) * 2.0 - 1.0;
-        let to_ndc_y = |py: f32| 1.0 - (py / window_height as f32) * 2.0;
+        let win_w = window_width.max(1) as f32;
+        let win_h = window_height.max(1) as f32;
+        let to_ndc_x = |px: f32| (px / win_w) * 2.0 - 1.0;
+        let to_ndc_y = |py: f32| 1.0 - (py / win_h) * 2.0;
 
         let x0 = to_ndc_x(x);
         let x1 = to_ndc_x(x + w);
@@ -169,7 +170,7 @@ impl GradientQuad {
         queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&verts));
 
         let uniforms = GradientUniforms {
-            hue,
+            hue: hue.rem_euclid(360.0),
             mode: if is_hue_bar { 1.0 } else { 0.0 },
             _pad: [0.0, 0.0],
         };
