@@ -107,11 +107,14 @@ Tree-Sitter y un panel de ejecucion runner integrado estilo NetBeans / Visual St
 
 -- [ DESCARGAS ] -------------------------------------------------------------
 
-* Instalador Oficial de Windows (v1.0.0):
+* Instalador Oficial de Windows x64 (v1.0.0 - recomendado):
   https://github.com/diegomatias0303/amoxtlicode/releases/download/v1.0.0/Instalar_AmoxliCode_v1.0.0.exe
 
 * Paquete Portable Windows x64 (incluye DLLs FFmpeg):
   https://github.com/diegomatias0303/amoxtlicode/releases/download/v1.0.0/AmoxliCode_v1.0.0_Windows_x64.zip
+
+* Paquete Precompilado Linux x86_64 (v1.0.0):
+  https://github.com/diegomatias0303/amoxtlicode/releases/download/v1.0.0/AmoxliCode_v1.0.0_Linux_x86_64.tar.gz
 
 * Ultima Release en GitHub:
   https://github.com/diegomatias0303/amoxtlicode/releases/tag/v1.0.0
@@ -271,7 +274,69 @@ Tree-Sitter y un panel de ejecucion runner integrado estilo NetBeans / Visual St
 
 ```text
 ===============================================================================
-  [ 06 // COMPILACION DESDE CODIGO FUENTE ]
+  [ 06 // GUIA DE INSTALACION RAPIDA (WINDOWS & LINUX) ]
+===============================================================================
+```
+
+### Windows 10 / 11 (x64)
+1. **Instalador (recomendado)**: descarga `Instalar_AmoxliCode_v1.0.0.exe` desde la Release, ejecútalo y listo (incluye ícono, acceso directo, menú contextual *"Abrir con AmoxliCode"* y todas las DLLs de FFmpeg).
+2. **Portable**: descarga `AmoxliCode_v1.0.0_Windows_x64.zip`, descomprime y abre `amoxlicode.exe` (opcionalmente ejecuta `Add-ContextMenu.ps1` para añadirlo al clic derecho).
+
+### Linux x86_64 (sin compilar — paso a paso)
+
+#### Paso 1: Instalar dependencias de ejecución (FFmpeg + Vulkan)
+Elige el comando de tu distribución:
+
+```bash
+# Ubuntu / Kubuntu / Linux Mint / Pop!_OS / Debian / Zorin:
+sudo apt update && sudo apt install -y ffmpeg libvulkan1
+
+# Fedora / Nobara / Bazzite / RHEL:
+sudo dnf install -y ffmpeg-free vulkan-loader
+
+# Arch Linux / Manjaro / EndeavourOS / CachyOS / Garuda:
+sudo pacman -S --needed ffmpeg vulkan-icd-loader
+
+# openSUSE Tumbleweed / Leap:
+sudo zypper install -y ffmpeg-6 libvulkan1
+```
+
+#### Paso 2: Descargar e instalar AmoxliCode
+```bash
+curl -L -o AmoxliCode_v1.0.0_Linux_x86_64.tar.gz \
+  https://github.com/diegomatias0303/amoxtlicode/releases/download/v1.0.0/AmoxliCode_v1.0.0_Linux_x86_64.tar.gz
+
+tar -xzf AmoxliCode_v1.0.0_Linux_x86_64.tar.gz
+cd AmoxliCode_v1.0.0_Linux_Portable
+
+chmod +x install.sh
+sudo ./install.sh
+```
+*(Si prefieres instalarlo solo para tu usuario sin `sudo`, ejecuta `./install.sh` y asegúrate de tener `~/.local/bin` en tu `PATH`.)*
+
+#### Paso 3: Abrir AmoxliCode
+Búscalo en tu menú de aplicaciones como **AmoxliCode**, o ábrelo desde la terminal:
+```bash
+amoxlicode
+amoxlicode archivo.py
+```
+
+#### ¿Te salió un error de `libavcodec.so...` o `GLIBC`?
+El paquete `.tar.gz` precompilado se construye sobre Ubuntu 24.04. Si usas una distro *rolling* o con distinta versión de FFmpeg (como **Arch, Manjaro, CachyOS, Nobara, Fedora** o un Debian anterior), compílalo nativo para tu sistema en 2 minutos:
+
+1. Instala las dependencias de desarrollo de tu distro (sección `07` abajo) y Rust (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`).
+2. Clona e instala directamente:
+```bash
+git clone https://github.com/diegomatias0303/amoxtlicode.git
+cd amoxtlicode
+chmod +x install.sh
+sudo ./install.sh
+```
+
+
+```text
+===============================================================================
+  [ 07 // COMPILACION DESDE CODIGO FUENTE ]
 ===============================================================================
 ```
 
@@ -280,9 +345,9 @@ Requisitos previos:
 * **Windows:** Windows 10/11 x64 con soporte para DirectX 12 o Vulkan.
 * **Linux:** Distribución x86_64 con soporte para Vulkan / OpenGL y librerías de desarrollo instaladas.
 
-#### Dependencias del sistema en Linux:
+#### Dependencias de compilación en Linux:
 ```bash
-# Ubuntu / Debian / Pop!_OS:
+# Ubuntu / Kubuntu / Debian / Linux Mint / Pop!_OS:
 sudo apt update && sudo apt install -y \
   build-essential pkg-config clang libasound2-dev \
   libvulkan-dev libx11-dev libxcb1-dev libxcursor-dev \
@@ -290,13 +355,13 @@ sudo apt update && sudo apt install -y \
   libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
   libavfilter-dev libavdevice-dev
 
-# Fedora / RHEL:
+# Fedora / Nobara / RHEL:
 sudo dnf install -y \
   gcc gcc-c++ clang pkgconf-pkg-config alsa-lib-devel \
   vulkan-loader-devel libX11-devel libXcursor-devel libXrandr-devel \
   libXi-devel wayland-devel ffmpeg-free-devel
 
-# Arch Linux / Manjaro:
+# Arch Linux / Manjaro / EndeavourOS / CachyOS / Garuda:
 sudo pacman -S --needed \
   base-devel clang alsa-lib vulkan-icd-loader libx11 \
   libxcursor libxrandr libxi wayland ffmpeg
